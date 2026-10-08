@@ -34,10 +34,10 @@ flowchart LR
 
 | # | Decision | Where it matters |
 |---|---|---|
-| D1 | Column name `status` (as in `migrations/001` and Payments' table) or `access_status` (as in `spacey`'s `docs/access-table.md`)? **Proposed: `status`** | database, api, migration script |
+| D1 | **Decided: `status`** — matches `migrations/001` and Payments; no rename needed | database, api, migration script |
 | D2 | Authentication: Purchase → Access, and browser → Access | api, for-other-teams |
 | D3 | Routing: how the browser reaches Access (a path on the same site, or its own host) | for-other-teams, migrate-from-spacey |
 | D4 | What `spacey`'s `/unlock` answers while Access is down | migrate-from-spacey |
 | D5 | Does check-in refuse a code at the wrong space (Q9)? | database, api |
 | D6 | May a moved expiry make `expired` access `available` again (Q11)? Default: no | database, api |
-| D7 | How migrations run in this repo (by hand with `psql` today) | database, production-data-migration |
+| D7 | **Decided: manual `psql`** — migrations are applied by hand; no automatic startup migration in this repo | database, production-data-migration |
