@@ -91,6 +91,8 @@ pytest
 
 CI (`.github/workflows/ci.yml`) runs the same tests against Postgres 16 on every pull request, then builds the Docker image (no push, no deploy).
 
+The manual [release workflow](.github/workflows/release.yml) tests, publishes and deploys a reviewed main revision when explicitly enabled. See [deployment setup and SRE checks](docs/deployment.md).
+
 > **Important:** Tests run against a local disposable database only. Never point `DATABASE_URL` at production.
 
 ---
