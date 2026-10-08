@@ -1,8 +1,8 @@
-# Tests for access.py
+# Tests for src/access.py
 # Run with: pytest
 # TODO: spacey-access#1 — write tests as functions are implemented
 
-from access import (
+from src.access import (
     issue_access_code,
     check_in,
     check_out,

@@ -1,0 +1,53 @@
+openapi: 3.0.3
+info:
+  title: Spacey Access API
+  version: "0.1.0"
+  description: >
+    The Access service of Spacey. It owns access records and access codes
+    (spacey-business-rules: SP-T12, SP-T13). For now it only reports its own
+    health; check-in, check-out and the rest follow once agreed with Frontend
+    and Purchase.
+
+paths:
+  /health:
+    get:
+      tags: [ops]
+      summary: Service and database health.
+      description: >
+        Runs a trivial query against the database. Used by the platform's
+        health check, so a 503 marks the deployment as unhealthy.
+      responses:
+        "200":
+          description: The service is up and the database is reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                  revision:
+                    type: string
+                    description: The deployed commit (APP_REVISION), or "local".
+                    example: local
+                required: [status, revision]
+        "503":
+          description: The database is unreachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [error] }
+                  error: { type: string, example: database unreachable }
+                required: [status, error]
+
+  /openapi.yaml:
+    get:
+      tags: [ops]
+      summary: This document.
+      responses:
+        "200":
+          description: The OpenAPI document the running service promises.
+          content:
+            application/yaml:
+              schema: { type: string }
