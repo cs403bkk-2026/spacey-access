@@ -75,7 +75,13 @@ Never commit a `.env` file or real credentials. The values in `compose.yaml` are
 
 ### Migrations
 
-Not run automatically yet; how migrations run is still to be decided. To create the table by hand on the local database:
+Migrations run manually with `psql` (decision D7, [ACC-01](https://github.com/cs403bkk-2026/spacey-access/issues/7)). Apply them in filename order before starting the app for the first time, or after adding a new migration file:
+
+```bash
+psql postgresql://access:access@localhost:5434/access -f migrations/001_create_access_table.sql
+```
+
+Every migration file uses `CREATE TABLE IF NOT EXISTS`, so running it twice is safe and changes nothing.
 
 ```bash
 psql postgresql://access:access@localhost:5434/access -f migrations/001_create_access_table.sql
