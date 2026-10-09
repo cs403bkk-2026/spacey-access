@@ -56,35 +56,34 @@ def purchase_create_access(booking_id):
 
 @api.post("/bookings/<int:booking_id>/access/remove")
 def purchase_remove_access(booking_id):
-    with get_connection() as conn:
-        result = db.remove_access(conn, booking_id)
+    result = db.remove_access(current_app.db, booking_id)
     if result is None:
         return jsonify(error="access record not found"), 404
     return jsonify(result), 200
 
+
 @api.post("/bookings/<int:booking_id>/access/expire")
 def purchase_expire_access(booking_id):
-    with get_connection() as conn:
-        result = db.expire_access(conn, booking_id)
+    result = db.expire_access(current_app.db, booking_id)
     if result is None:
         return jsonify(error="access record not found"), 404
     return jsonify(result), 200
+
 
 @api.post("/bookings/<int:booking_id>/check-in")
 def frontend_check_in(booking_id):
     body = _body("access_code")
     if body is None:
         return _missing("access_code")
-    with get_connection() as conn:
-        result = db.check_in(conn, booking_id, body["access_code"])
+    result = db.check_in(current_app.db, booking_id, body["access_code"])
     if result is None:
         return jsonify(error="access record not found or code invalid"), 404
     return jsonify(result), 200
 
+
 @api.post("/bookings/<int:booking_id>/check-out")
 def frontend_check_out(booking_id):
-    with get_connection() as conn:
-        result = db.check_out(conn, booking_id)
+    result = db.check_out(current_app.db, booking_id)
     if result is None:
         return jsonify(error="access record not found or not checked in"), 404
     return jsonify(result), 200
