@@ -78,6 +78,13 @@ def test_purchase_calls_with_a_wrong_token_are_401(client, url):
 
 
 @pytest.mark.parametrize("url", PURCHASE_ENDPOINTS)
+def test_purchase_calls_with_a_non_ascii_token_are_401_not_500(client, url):
+    response = client.post(url, headers={"Authorization": "Bearer tëst"})
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("url", PURCHASE_ENDPOINTS)
 def test_the_token_is_checked_before_the_body(client, url):
     # No token and an empty body: 401, not the 400 for the missing times.
     response = client.post(url, json={})

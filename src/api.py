@@ -24,7 +24,9 @@ def require_service_token(view):
     def wrapper(*args, **kwargs):
         expected = os.getenv("SERVICE_TOKEN", "")
         sent = request.headers.get("Authorization", "").removeprefix("Bearer ")
-        if not expected or not hmac.compare_digest(sent, expected):
+        # Bytes, because compare_digest raises on non-ASCII str: a header like
+        # "Bearer tëst" must be a 401, not a 500.
+        if not expected or not hmac.compare_digest(sent.encode(), expected.encode()):
             return jsonify(error="invalid or missing service token"), 401
         return view(*args, **kwargs)
 
