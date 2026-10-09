@@ -8,6 +8,10 @@ joined to bookings for the space and interval. Writes Access's `access` table.
   never overwritten (rows granted by Access after cutover stay as they are).
 - Known facts only: no codes are invented. A row whose booking has no
   start/end keeps those columns empty.
+- Cancellations: an Access row (available or used) whose booking no longer
+  exists in spacey's `bookings` becomes `removed`. Compared against
+  `bookings`, never against spacey's `access` table: codes granted by Access
+  after the switch only exist in Access, and would all be removed.
 
 Usage:
     SOURCE_DATABASE_URL=... TARGET_DATABASE_URL=... python scripts/migrate_from_spacey.py [--apply]
@@ -30,6 +34,15 @@ SOURCE_QUERY = """
     ORDER BY a.booking_id
 """
 
+BOOKING_IDS_QUERY = "SELECT id FROM bookings"
+
+MARK_REMOVED = """
+    UPDATE access
+    SET status = 'removed', removed_at = now()
+    WHERE status IN ('available', 'used')
+      AND NOT (booking_id = ANY(%(booking_ids)s))
+"""
+
 INSERT = """
     INSERT INTO access (booking_id, access_code, status, created_at,
                         booked_start_time, booked_end_time, space_id, expires_at)
@@ -46,12 +59,26 @@ def env(name: str) -> str:
     return value
 
 
-def read_source(url: str) -> list[dict]:
+def read_source(url: str) -> tuple[list[dict], list[int]]:
+    """The access rows to copy, and the ids of every booking spacey still has."""
     with psycopg.connect(url, row_factory=dict_row) as conn:
         conn.read_only = True
         with conn.cursor() as cur:
             cur.execute(SOURCE_QUERY)
-            return cur.fetchall()
+            rows = cur.fetchall()
+            cur.execute(BOOKING_IDS_QUERY)
+            booking_ids = [r["id"] for r in cur.fetchall()]
+    return rows, booking_ids
+
+
+def mark_cancelled_removed(cur, booking_ids: list[int]) -> int:
+    """Set rows whose booking is gone from spacey to `removed`; returns how many.
+    Only available/used rows change: expired and removed rows are final."""
+    if not booking_ids:
+        # An empty list would remove every row (wrong database, wrong user).
+        sys.exit("spacey returned no bookings: refusing to mark anything removed")
+    cur.execute(MARK_REMOVED, {"booking_ids": booking_ids})
+    return cur.rowcount
 
 
 def status_for(row: dict, now: datetime) -> str:
@@ -72,7 +99,7 @@ def main() -> None:
         sys.exit("SOURCE_DATABASE_URL and TARGET_DATABASE_URL must differ")
 
     now = datetime.now(timezone.utc)
-    rows = read_source(source_url)
+    rows, booking_ids = read_source(source_url)
     for row in rows:
         row["status"] = status_for(row, now)
 
@@ -93,11 +120,14 @@ def main() -> None:
                 cur.execute(INSERT, row)
                 inserted += cur.rowcount
 
+            removed = mark_cancelled_removed(cur, booking_ids)
+
             cur.execute("SELECT count(*) FROM access")
             after = cur.fetchone()[0]
 
             print(f"target rows: before {before}, after {after}  "
                   f"(inserted {inserted}, already there {len(rows) - inserted})")
+            print(f"cancelled in spacey, marked removed: {removed}")
 
             if args.apply:
                 conn.commit()
