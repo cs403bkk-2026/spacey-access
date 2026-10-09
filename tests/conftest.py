@@ -6,7 +6,8 @@ from app import create_app
 @pytest.fixture()
 def app():
     """Create application for testing."""
-    app = create_app({"TESTING": True})
+    # create_app's argument is the database URL; the default reads DATABASE_URL.
+    app = create_app()
     yield app
 
 
