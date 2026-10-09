@@ -21,13 +21,13 @@ Decision records live in [`ACC/`](ACC/), named `####-Title.md`:
 
 ```mermaid
 flowchart LR
-    FE["Frontend<br/>spacey-frontend"] -->|"check-in / check-out<br/>read status"| ACC
-    PUR["Purchase<br/>spacey"] -->|"grant · remove · move interval<br/>(after its paid check)"| ACC
+    FE["Frontend<br/>spacey-frontend"] -->|"check-in / check-out"| ACC
+    PUR["Purchase<br/>spacey"] -->|"create · remove · expire<br/>(after its paid check)"| ACC
     subgraph ACC["Access · spacey-access"]
         API["src/api.py"] --> DBM["src/db.py"]
     end
     DBM --> PG[("Access database<br/>access table")]
-    ACC -. "calls no one,<br/>reads no other team's data" .-> X(( ))
+    ACC -.->|"expiry notice<br/>(dummy, not sent yet)"| PUR
 ```
 
 ## Open decisions (affect several docs)

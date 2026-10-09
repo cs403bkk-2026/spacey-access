@@ -6,8 +6,8 @@ Status: Proposed by the Access team. Not started: only the working skeleton exis
 Needs agreement from Purchase, Frontend and the SRE (see "Needs agreement").
 
 **Decision:** on top of the skeleton, Access becomes the `spacey-access` service with **its own
-database** (one `access` table) and **its own HTTP API**. Frontend and Purchase call it, and Access
-calls no one. It moves out of `spacey` in four steps, with a one-time copy of the existing codes.
+database** (one `access` table) and **its own HTTP API**. Frontend and Purchase call it; Access's
+only outgoing call is the expiry notice to Purchase. It moves out of `spacey` in four steps, with a one-time copy of the existing codes.
 
 ## Why not the alternatives
 
@@ -25,8 +25,8 @@ calls no one. It moves out of `spacey` in four steps, with a one-time copy of th
 |---|---|---|
 | Code | Refactor the skeleton to `app.py` → **`src/api.py`** (HTTP only) → **`src/db.py`** (every operation as SQL, the only file talking to Postgres) → Postgres | [architecture.md](../architecture.md) |
 | Data | Own database; `access` table, 11 columns, states `available / used / expired / removed`; never delete a row; `booking_id` is a value, not a foreign key | [database.md](../database.md) |
-| API | Grant, read, check-in, check-out, remove, move interval (proposed), next to the live `/health` and `/openapi.yaml` | [api.md](../api.md) |
-| Callers | Purchase: grant (after its own paid check), remove, move interval. Frontend: check-in, check-out, read | [for-other-teams.md](../for-other-teams.md) |
+| API | Create, remove, expire (Purchase); check-in, check-out (Frontend); an expiry notice to Purchase. Defined and running as dummies, next to `/health` and `/openapi.yaml` | [api.md](../api.md) |
+| Callers | Purchase: create (after its own paid check), remove, expire. Frontend: check-in, check-out | [for-other-teams.md](../for-other-teams.md) |
 | Move | 1 `access/` package inside `spacey` → 2 `spacey-access` ready → 3 cutover → 4 clean up | [migrate-from-spacey.md](../migrate-from-spacey.md) |
 | Data copy | Script: dry run first, safe to run again, read-only on `spacey` | [production-data-migration.md](../production-data-migration.md) |
 
@@ -35,8 +35,8 @@ calls no one. It moves out of `spacey` in four steps, with a one-time copy of th
 - **JSON over HTTP, REST-style**, under `/bookings/{booking_id}/…`. `spacey`'s integer `booking_id` is the only identifier shared with other services.
 - **Contract first:** every endpoint is added to `openapi.yaml` and agreed with its caller before it's built. For check-in and check-out, Access follows the spec Frontend agrees.
 - **Same conventions as `spacey`:** errors are `{"error": "…"}` with a meaningful status (a `409` also carries `"status"`); times are ISO 8601 with an offset.
-- **Writes are safe to retry** (grant, remove); **reads never return the access code**.
-- **Access calls no other service and reads no other team's data.** Anything it needs is passed in.
+- **Writes are safe to retry** (create, remove, expire); **only the create answer carries the access code**.
+- **Access reads no other team's data.** Anything it needs is passed in. Its only outgoing call is the expiry notice to Purchase (`src/purchase_client.py`).
 - **Tests check every response against `openapi.yaml`**, so the hand-written contract can't drift silently.
 
 ## Consequences

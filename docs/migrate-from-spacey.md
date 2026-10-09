@@ -7,7 +7,7 @@ Inventory checked on `spacey` `main` at `17c7d2d` (2026-10-08). The decision is 
 
 | In `spacey` | What it is | Goes to | Notes |
 |---|---|---|---|
-| `access.py` → `issue_access_code()` | Paid check + insert or return the code | `spacey-access` `src/db.py` (grant) | The **paid check stays in Purchase**: Access doesn't read `bookings` |
+| `access.py` → `issue_access_code()` | Paid check + insert or return the code | `spacey-access` `src/db.py` (`create_access`) | The **paid check stays in Purchase**: Access doesn't read `bookings` |
 | `purchase/schema.py`: `CREATE TABLE access (…)` | The table, 3 columns, `ON DELETE CASCADE` to `bookings` | `spacey-access` `migrations/001_…sql` (11 columns, no FK) | Removed from `spacey` only after cutover |
 | `app.py`: `POST /bookings/<id>/unlock` | The only route using Access | **stays in `spacey`** (Purchase): checks paid, then forwards to `POST /bookings/{id}/access` | Frontend keeps calling it unchanged (proposed) |
 | `app.py`: `reset_tables()` `TRUNCATE access, …` | Test reset | drop `access` from it in cleanup | — |
@@ -24,7 +24,7 @@ Inventory checked on `spacey` `main` at `17c7d2d` (2026-10-08). The decision is 
 ```mermaid
 flowchart LR
     S1["1 · Inside spacey<br/>access.py → access/ package<br/>(own migrations, no bookings read)"]
-    S2["2 · spacey-access ready<br/>grant/remove/read endpoints,<br/>own DB, deployed, /health ok"]
+    S2["2 · spacey-access ready<br/>create/remove/expire endpoints,<br/>own DB, deployed, /health ok"]
     S3["3 · Cutover<br/>copy rows → switch /unlock<br/>to forward → verify"]
     S4["4 · Clean up spacey<br/>remove access/ package,<br/>access table, TRUNCATE entry"]
     S1 --> S2 --> S3 --> S4
@@ -34,7 +34,7 @@ flowchart LR
 | Step | Done when |
 |---|---|
 | 1 | All unlock tests green; `access` DDL out of `purchase/schema.py`; Access code doesn't read `bookings` |
-| 2 | `spacey-access` deployed; `/health` 200; grant, remove and read endpoints tested against our `openapi.yaml` |
+| 2 | `spacey-access` deployed; `/health` 200; create, remove and expire endpoints tested against our `openapi.yaml` |
 | 3 | Row count copied = row count in `spacey`; `/unlock` answers the same code as before for an existing booking; a new booking gets a code from Access |
 | 4 | `spacey` has no Access code or table left; its suite is green |
 
