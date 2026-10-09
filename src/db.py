@@ -10,13 +10,24 @@ from psycopg.rows import dict_row
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://access:access@localhost:5434/access")
 
 
-def get_connection():
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True)
+def get_connection(database_url: str = DATABASE_URL) -> psycopg.Connection:
+    try:
+        return psycopg.connect(database_url, row_factory=dict_row, autocommit=True)
+    except psycopg.OperationalError:
+        # A raw psycopg traceback is the first thing a new contributor sees
+        # if Postgres isn't running yet - fail fast with a clear pointer.
+        raise SystemExit(
+            "Could not connect to the database. Check DATABASE_URL and database availability."
+        ) from None
 
 
 def ping(conn) -> bool:
-    conn.execute("SELECT 1")
-    return True
+    """True if the database answers. Used by GET /health."""
+    try:
+        conn.execute("SELECT 1")
+        return True
+    except psycopg.Error:
+        return False
 
 
 def _generate_access_code() -> str:
