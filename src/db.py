@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 
 import psycopg
 from psycopg.rows import dict_row
@@ -28,34 +29,43 @@ def ping(conn) -> bool:
         return False
 
 
-# --- Access operations (moved here from src/access.py, ACC-03) ------------
+# --- Access operations -----------------------------------------------------
+# Each function is called by exactly one network function in src/api.py.
+# DUMMY: they return fixed answers shaped as openapi.yaml says and don't touch
+# the database yet. The real SQL (ACC-07 to ACC-09) replaces the bodies only.
 
-def issue_access_code(cur, booking_id, eligible: bool):
-    # TODO: spacey-access#2
-    # eligible flag comes from Purchase — do not read bookings table here
-    raise NotImplementedError
-
-
-def check_in(cur, booking_id, access_code):
-    # TODO: spacey-access#1
-    # SP-R15: code match → not removed → not expired → within interval → available
-    raise NotImplementedError
+DUMMY_ACCESS_CODE = "00000000"
 
 
-def check_out(cur, booking_id, access_code):
-    # TODO: spacey-access#1
-    # SP-R16: used → available (re-entry allowed)
-    raise NotImplementedError
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def remove_access(cur, booking_id):
-    # TODO: spacey-access#1
-    # SP-R12: record is never deleted, only marked removed
-    # SP-R13: does not affect payments
-    raise NotImplementedError
+def create_access(conn, booking_id, start_time, end_time):
+    """Purchase -> Access: new access record for a paid booking."""
+    return {
+        "booking_id": booking_id,
+        "access_code": DUMMY_ACCESS_CODE,
+        "status": "available",
+        "expires_at": end_time,
+    }
 
 
-def expire_access(cur, booking_id):
-    # TODO: spacey-access#1
-    # SP-R17: lazy expiry — called on touch, not on a schedule
-    raise NotImplementedError
+def remove_access(conn, booking_id):
+    """Purchase -> Access: the booking was cancelled. The record is kept (SP-R12)."""
+    return {"booking_id": booking_id, "status": "removed", "removed_at": _now()}
+
+
+def expire_access(conn, booking_id):
+    """Purchase -> Access: the booking has ended by Purchase's clock."""
+    return {"booking_id": booking_id, "status": "expired"}
+
+
+def check_in(conn, booking_id, access_code):
+    """Frontend -> Access: the member presents the access code."""
+    return {"booking_id": booking_id, "status": "used", "checked_in_at": _now()}
+
+
+def check_out(conn, booking_id):
+    """Frontend -> Access: the member leaves; they may check in again until expiry."""
+    return {"booking_id": booking_id, "status": "available", "checked_out_at": _now()}

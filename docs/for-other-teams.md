@@ -2,7 +2,7 @@
 
 Short version: **call our HTTP API, never our database.** The contract is
 [`openapi.yaml`](../openapi.yaml) (live at `GET /openapi.yaml`); [api.md](api.md) is the readable
-table. Everything below the "today" line is **proposed**: tell us what to change.
+table. Every endpoint exists, answering with **dummy** values until the real logic lands.
 
 ## Purchase (`spacey`)
 
@@ -14,8 +14,8 @@ sequenceDiagram
     participant A as Access
     M->>P: POST /bookings/42/unlock
     P->>P: booking exists? paid? (404 / 402)
-    P->>A: POST /bookings/42/access {space_id, start_time, end_time}
-    A-->>P: 201/200 {access_code, status, expires_at}
+    P->>A: POST /bookings/42/access {start_time, end_time}
+    A-->>P: 201 {access_code, status, expires_at}
     P-->>M: 200 {booking_id, access_code}  (unchanged contract)
     Note over M,P: later: the booking is cancelled
     M->>P: DELETE /bookings/42
@@ -26,11 +26,12 @@ sequenceDiagram
 
 | You do | Call | Notes |
 |---|---|---|
-| Unlock for a **paid** booking | `POST /bookings/{id}/access` with space and interval | **You** check that the booking is paid; we don't. Safe to retry: the same code comes back |
+| Unlock for a **paid** booking | `POST /bookings/{id}/access` with the booking's start and end | **You** check that the booking is paid; we don't. Safe to retry: the same code comes back |
 | Cancel a booking | `POST /bookings/{id}/access/remove` **before** your own cancel | Safe to retry. We keep the record |
-| Change a booking's time | `PATCH /bookings/{id}/access` | Moves our copy of the interval and the expiry |
+| The booking ended (your clock) | `POST /bookings/{id}/access/expire` | Safe to retry |
+| *(we call you)* access ended (our clock) | `POST {PURCHASE_URL}/bookings/{id}/access-expired` | **You add this endpoint.** Not sent until it exists |
 
-**What we need you to agree:** these three calls; the unlock forwarding (Frontend keeps calling your
+**What we need you to agree:** these calls, and the one we make to you; the unlock forwarding (Frontend keeps calling your
 `/unlock`); what `/unlock` answers if Access is down (D4); and authentication (D2).
 
 ## Frontend (`spacey-frontend`)
@@ -39,7 +40,6 @@ sequenceDiagram
 |---|---|---|
 | Check in with a code | `POST /bookings/{id}/check-in` `{access_code}` | `200` on success; `403`/`409` carry the reason |
 | Check out | `POST /bookings/{id}/check-out` | — |
-| Know which section to show | `GET /bookings/{id}/access` | Never returns the code |
 | Get the code (as today) | **unchanged:** `POST /bookings/{id}/unlock` on `spacey` | Purchase forwards it to us |
 
 **Your call:** the API shape for check-in and check-out. We follow the spec you agree. Please also tell

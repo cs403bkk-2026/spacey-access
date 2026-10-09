@@ -33,78 +33,15 @@ paths:
         "200":
           description: YAML document
 
+  # --- Purchase -> Access -------------------------------------------------
+  # Responses are DUMMY for now (fixed values); 403/404/409 come with the real logic.
+
   /bookings/{booking_id}/access:
     post:
-      summary: Grant access for a paid booking (Purchase only)
-      description: >
-        Idempotent — returns the same code on repeat. Purchase must have
-        confirmed payment before calling this.
+      summary: Create the access record for a paid booking (Purchase)
+      description: Purchase checks payment before calling this.
       parameters:
-        - name: booking_id
-          in: path
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [space_id, start_time, end_time]
-              properties:
-                space_id:
-                  type: integer
-                start_time:
-                  type: string
-                  format: date-time
-                end_time:
-                  type: string
-                  format: date-time
-      responses:
-        "201":
-          description: Access granted (new)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccessRecord"
-        "200":
-          description: Access already existed (idempotent)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccessRecord"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-    get:
-      summary: Read access status (never returns the code)
-      parameters:
-        - name: booking_id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Current status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccessStatus"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-    patch:
-      summary: Move the booking interval and expiry (Purchase only)
-      parameters:
-        - name: booking_id
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/BookingId"
       requestBody:
         required: true
         content:
@@ -113,40 +50,29 @@ paths:
               type: object
               required: [start_time, end_time]
               properties:
-                start_time:
-                  type: string
-                  format: date-time
-                end_time:
-                  type: string
-                  format: date-time
-                expires_at:
-                  type: string
-                  format: date-time
-                  description: Defaults to end_time if omitted
+                start_time: { type: string, format: date-time }
+                end_time: { type: string, format: date-time }
       responses:
-        "200":
-          description: Interval updated
+        "201":
+          description: Access created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AccessStatus"
+                type: object
+                properties:
+                  booking_id: { type: integer }
+                  access_code: { type: string, example: "00000000" }
+                  status: { type: string, example: available }
+                  expires_at: { type: string, format: date-time }
         "400":
           $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
 
   /bookings/{booking_id}/access/remove:
     post:
-      summary: Remove access on cancellation (Purchase only)
-      description: Idempotent — safe to retry.
+      summary: Remove access, the booking was cancelled (Purchase)
+      description: Soft delete. The record is kept with status removed.
       parameters:
-        - name: booking_id
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/BookingId"
       responses:
         "200":
           description: Access removed
@@ -155,26 +81,33 @@ paths:
               schema:
                 type: object
                 properties:
-                  booking_id:
-                    type: integer
-                  status:
-                    type: string
-                    example: removed
-                  removed_at:
-                    type: string
-                    format: date-time
-        "404":
-          $ref: "#/components/responses/NotFound"
+                  booking_id: { type: integer }
+                  status: { type: string, example: removed }
+                  removed_at: { type: string, format: date-time }
+
+  /bookings/{booking_id}/access/expire:
+    post:
+      summary: Expire access, the booking has ended by Purchase's clock (Purchase)
+      parameters:
+        - $ref: "#/components/parameters/BookingId"
+      responses:
+        "200":
+          description: Access expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  booking_id: { type: integer }
+                  status: { type: string, example: expired }
+
+  # --- Frontend -> Access -------------------------------------------------
 
   /bookings/{booking_id}/check-in:
     post:
-      summary: Check in — present the access code (Frontend only)
+      summary: Check in with the access code (Frontend)
       parameters:
-        - name: booking_id
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/BookingId"
       requestBody:
         required: true
         content:
@@ -183,9 +116,7 @@ paths:
               type: object
               required: [access_code]
               properties:
-                access_code:
-                  type: string
-                  example: "8754e726"
+                access_code: { type: string, example: "00000000" }
       responses:
         "200":
           description: Checked in
@@ -194,36 +125,17 @@ paths:
               schema:
                 type: object
                 properties:
-                  booking_id:
-                    type: integer
-                  status:
-                    type: string
-                    example: used
-                  checked_in_at:
-                    type: string
-                    format: date-time
+                  booking_id: { type: integer }
+                  status: { type: string, example: used }
+                  checked_in_at: { type: string, format: date-time }
         "400":
           $ref: "#/components/responses/BadRequest"
-        "403":
-          description: Code does not match
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
 
   /bookings/{booking_id}/check-out:
     post:
-      summary: Check out — release the room (Frontend only)
+      summary: Check out (Frontend). Access becomes available again until it expires
       parameters:
-        - name: booking_id
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/BookingId"
       responses:
         "200":
           description: Checked out
@@ -232,84 +144,32 @@ paths:
               schema:
                 type: object
                 properties:
-                  booking_id:
-                    type: integer
-                  status:
-                    type: string
-                    example: available
-                  checked_out_at:
-                    type: string
-                    format: date-time
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
+                  booking_id: { type: integer }
+                  status: { type: string, example: available }
+                  checked_out_at: { type: string, format: date-time }
+
+# Access -> Purchase (not part of this API): when access expires by Access's clock,
+# Access calls POST {PURCHASE_URL}/bookings/{booking_id}/access-expired
+# (src/purchase_client.py; dummy, nothing is sent until Purchase has that endpoint).
 
 components:
+  parameters:
+    BookingId:
+      name: booking_id
+      in: path
+      required: true
+      schema: { type: integer }
+
   schemas:
-    AccessRecord:
-      type: object
-      properties:
-        booking_id:
-          type: integer
-        access_code:
-          type: string
-          example: "8754e726"
-        status:
-          type: string
-          enum: [available, used, expired, removed]
-        expires_at:
-          type: string
-          format: date-time
-
-    AccessStatus:
-      type: object
-      properties:
-        booking_id:
-          type: integer
-        status:
-          type: string
-          enum: [available, used, expired, removed]
-        checked_in_at:
-          type: string
-          format: date-time
-          nullable: true
-        checked_out_at:
-          type: string
-          format: date-time
-          nullable: true
-        expires_at:
-          type: string
-          format: date-time
-          nullable: true
-
     Error:
       type: object
       properties:
-        error:
-          type: string
+        error: { type: string }
 
   responses:
     BadRequest:
-      description: Bad request
+      description: A required field is missing
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-    NotFound:
-      description: No access record for this booking
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    Conflict:
-      description: State conflict (already used, removed, etc.)
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error:
-                type: string
-              status:
-                type: string
