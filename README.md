@@ -62,6 +62,7 @@ flask --app app run --port 8003 --debug
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql://access:access@localhost:5434/access` | Postgres connection string. The app exits at start with a clear message if it can't connect |
+| `SERVICE_TOKEN` | *(none)* | Shared secret for Purchase ↔ Access. Purchase sends it as `Authorization: Bearer <token>` on create, remove and expire; without it those calls get `401`. In production it comes from the Nomad variable (key `service_token`), never from Git |
 | `APP_REVISION` | `local` | Shown by `/health`, so a deployment can confirm which commit is live |
 
 Never commit a `.env` file or real credentials. The values in `compose.yaml` are local placeholders.

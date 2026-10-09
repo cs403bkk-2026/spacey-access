@@ -14,5 +14,7 @@ def notify_purchase_expired(booking_id):
     return {
         "method": "POST",
         "url": f"{PURCHASE_URL}/bookings/{booking_id}/access-expired",
+        # The same shared token Purchase sends to us (ACC-08); never hardcoded.
+        "headers": {"Authorization": f"Bearer {os.getenv('SERVICE_TOKEN', '')}"},
         "json": {"booking_id": booking_id, "status": "expired"},
     }
