@@ -35,7 +35,7 @@ flowchart LR
 | # | Decision | Where it matters |
 |---|---|---|
 | D1 | **Decided: `status`** — matches `migrations/001` and Payments; no rename needed | database, api, migration script |
-| D2 | Authentication: Purchase → Access, and browser → Access | api, for-other-teams |
+| D2 | **Decided: shared bearer token for Purchase ↔ Access**; browser → Access authentication remains open | api, for-other-teams |
 | D3 | Routing: how the browser reaches Access (a path on the same site, or its own host) | for-other-teams, migrate-from-spacey |
 | D4 | What `spacey`'s `/unlock` answers while Access is down | migrate-from-spacey |
 | D5 | Does check-in refuse a code at the wrong space (Q9)? | database, api |

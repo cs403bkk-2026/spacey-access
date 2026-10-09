@@ -11,10 +11,13 @@ PURCHASE_URL = os.getenv("PURCHASE_URL", "http://localhost:8000")
 
 def notify_purchase_expired(booking_id):
     """Access -> Purchase: the access expired by Access's clock."""
+    service_token = os.getenv("SERVICE_TOKEN")
+    if not service_token:
+        raise RuntimeError("SERVICE_TOKEN must be configured")
+
     return {
         "method": "POST",
         "url": f"{PURCHASE_URL}/bookings/{booking_id}/access-expired",
-        # The same shared token Purchase sends to us (ACC-08); never hardcoded.
-        "headers": {"Authorization": f"Bearer {os.getenv('SERVICE_TOKEN', '')}"},
+        "headers": {"Authorization": f"Bearer {service_token}"},
         "json": {"booking_id": booking_id, "status": "expired"},
     }

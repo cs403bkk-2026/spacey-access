@@ -39,7 +39,7 @@ paths:
   /bookings/{booking_id}/access:
     post:
       summary: Create the access record for a paid booking (Purchase)
-      description: Purchase checks payment before calling this.
+      description: Purchase checks payment before calling this. Requires the shared service token.
       security:
         - ServiceToken: []
       parameters:

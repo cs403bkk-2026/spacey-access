@@ -31,8 +31,19 @@ sequenceDiagram
 | The booking ended (your clock) | `POST /bookings/{id}/access/expire` | Safe to retry |
 | *(we call you)* access ended (our clock) | `POST {PURCHASE_URL}/bookings/{id}/access-expired` | **You add this endpoint.** Not sent until it exists |
 
-**What we need you to agree:** these calls, and the one we make to you; the unlock forwarding (Frontend keeps calling your
-`/unlock`); what `/unlock` answers if Access is down (D4); and authentication (D2).
+All three Purchase-to-Access calls require `Authorization: Bearer <shared secret>`.
+Access reads the shared value from the platform-provided `SERVICE_TOKEN`;
+requests without a matching token receive `401` before request validation or
+database work. Provision the same value to Purchase through the platform and
+Purchase's CI secret store. Never put the secret in source control.
+
+Access's future expiry notice to Purchase will use that same token in the
+`Authorization: Bearer` header.
+
+**What we need you to agree:** the shared secret provisioning with Purchase and
+SRE; the unlock forwarding (Frontend keeps calling your `/unlock`); and what
+`/unlock` answers if Access is down (D4). The agreed D2 contract is the
+`Authorization: Bearer` header.
 
 ## Frontend (`spacey-frontend`)
 
