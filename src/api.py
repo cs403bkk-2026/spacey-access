@@ -1,7 +1,9 @@
 """HTTP only: read the request, call src/db.py, answer as openapi.yaml says.
 No SQL here (docs/architecture.md)."""
 
+import hmac
 import os
+from functools import wraps
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request, send_file
@@ -11,6 +13,24 @@ from src import db
 OPENAPI_PATH = Path(__file__).parent.parent / "openapi.yaml"
 
 api = Blueprint("api", __name__)
+
+
+def require_service_token(view):
+    """Purchase -> Access calls must carry `Authorization: Bearer <SERVICE_TOKEN>`.
+    Checked before anything else, so a bad token is 401 even on a bad body.
+    If SERVICE_TOKEN is not set the call is refused, never let through."""
+
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        expected = os.getenv("SERVICE_TOKEN", "")
+        sent = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        # Bytes, because compare_digest raises on non-ASCII str: a header like
+        # "Bearer tëst" must be a 401, not a 500.
+        if not expected or not hmac.compare_digest(sent.encode(), expected.encode()):
+            return jsonify(error="invalid or missing service token"), 401
+        return view(*args, **kwargs)
+
+    return wrapper
 
 
 def _body(*required):
@@ -47,6 +67,7 @@ def openapi():
 
 
 @api.post("/bookings/<int:booking_id>/access")
+@require_service_token
 def purchase_create_access(booking_id):
     body = _body("start_time", "end_time")
     if body is None:
@@ -55,6 +76,7 @@ def purchase_create_access(booking_id):
 
 
 @api.post("/bookings/<int:booking_id>/access/remove")
+@require_service_token
 def purchase_remove_access(booking_id):
     result = db.remove_access(current_app.db, booking_id)
     if result is None:
@@ -63,6 +85,7 @@ def purchase_remove_access(booking_id):
 
 
 @api.post("/bookings/<int:booking_id>/access/expire")
+@require_service_token
 def purchase_expire_access(booking_id):
     result = db.expire_access(current_app.db, booking_id)
     if result is None:

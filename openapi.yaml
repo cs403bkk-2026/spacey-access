@@ -39,7 +39,9 @@ paths:
   /bookings/{booking_id}/access:
     post:
       summary: Create the access record for a paid booking (Purchase)
-      description: Purchase checks payment before calling this.
+      description: Purchase checks payment before calling this. Requires the shared service token.
+      security:
+        - ServiceToken: []
       parameters:
         - $ref: "#/components/parameters/BookingId"
       requestBody:
@@ -66,11 +68,15 @@ paths:
                   expires_at: { type: string, format: date-time }
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /bookings/{booking_id}/access/remove:
     post:
       summary: Remove access, the booking was cancelled (Purchase)
       description: Soft delete. The record is kept with status removed.
+      security:
+        - ServiceToken: []
       parameters:
         - $ref: "#/components/parameters/BookingId"
       responses:
@@ -84,10 +90,14 @@ paths:
                   booking_id: { type: integer }
                   status: { type: string, example: removed }
                   removed_at: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /bookings/{booking_id}/access/expire:
     post:
       summary: Expire access, the booking has ended by Purchase's clock (Purchase)
+      security:
+        - ServiceToken: []
       parameters:
         - $ref: "#/components/parameters/BookingId"
       responses:
@@ -100,6 +110,8 @@ paths:
                 properties:
                   booking_id: { type: integer }
                   status: { type: string, example: expired }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   # --- Frontend -> Access -------------------------------------------------
 
@@ -153,6 +165,15 @@ paths:
 # (src/purchase_client.py; dummy, nothing is sent until Purchase has that endpoint).
 
 components:
+  securitySchemes:
+    ServiceToken:
+      type: http
+      scheme: bearer
+      description: >
+        Shared secret between Purchase and Access (SERVICE_TOKEN), sent as
+        `Authorization: Bearer <token>`. Required on create, remove and expire.
+        The value lives in the platform and CI secrets, never in Git.
+
   parameters:
     BookingId:
       name: booking_id
@@ -167,6 +188,12 @@ components:
         error: { type: string }
 
   responses:
+    Unauthorized:
+      description: The service token is missing or wrong
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     BadRequest:
       description: A required field is missing
       content:

@@ -11,6 +11,19 @@ def app():
     yield app
 
 
+@pytest.fixture(autouse=True)
+def service_token(monkeypatch):
+    """The shared Purchase <-> Access token (ACC-08), set for every test."""
+    monkeypatch.setenv("SERVICE_TOKEN", "test-token")
+    return "test-token"
+
+
+@pytest.fixture()
+def auth(service_token):
+    """Headers Purchase sends on create, remove and expire."""
+    return {"Authorization": f"Bearer {service_token}"}
+
+
 @pytest.fixture()
 def client(app):
     """Test client for the app."""
