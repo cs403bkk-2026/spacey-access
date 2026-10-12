@@ -7,6 +7,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request, send_file
+from src.access import issue_access_code
 
 from src import db
 
@@ -110,3 +111,9 @@ def frontend_check_out(booking_id):
     if result is None:
         return jsonify(error="access record not found or not checked in"), 404
     return jsonify(result), 200
+
+
+@api.post("/bookings/<int:booking_id>/unlock")
+def unlock_booking(booking_id):
+    payload, status = issue_access_code(booking_id)
+    return jsonify(payload), status
