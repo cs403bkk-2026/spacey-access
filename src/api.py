@@ -7,7 +7,6 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request, send_file
-from src.access import issue_access_code
 
 from src import db
 
@@ -76,14 +75,22 @@ def purchase_create_access(booking_id):
     return jsonify(db.create_access(current_app.db, booking_id, body["start_time"], body["end_time"])), 201
 
 
-@api.post("/bookings/<int:booking_id>/access/remove")
+@api.post("/bookings/<int:booking_id>/access/revoke")
 @require_service_token
-def purchase_remove_access(booking_id):
-    result = db.remove_access(current_app.db, booking_id)
+def purchase_revoke_access(booking_id):
+    result = db.revoke_access(current_app.db, booking_id)
     if result is None:
         return jsonify(error="access record not found"), 404
     return jsonify(result), 200
 
+
+@api.get("/bookings/<int:booking_id>/access")
+@require_service_token
+def purchase_read_access(booking_id):
+    result = db.read_access(current_app.db, booking_id)
+    if result is None:
+        return jsonify(error="access record not found"), 404
+    return jsonify(result), 200
 
 @api.post("/bookings/<int:booking_id>/access/expire")
 @require_service_token
@@ -111,9 +118,3 @@ def frontend_check_out(booking_id):
     if result is None:
         return jsonify(error="access record not found or not checked in"), 404
     return jsonify(result), 200
-
-
-@api.post("/bookings/<int:booking_id>/unlock")
-def unlock_booking(booking_id):
-    payload, status = issue_access_code(booking_id)
-    return jsonify(payload), status
