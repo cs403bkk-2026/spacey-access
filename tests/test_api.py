@@ -42,11 +42,11 @@ def test_create_access_without_the_booking_times_is_400(client, auth):
     assert "error" in response.get_json()
 
 
-def test_revoke_access_marks_it_removed(client, auth):
+def test_revoke_access_marks_it_revoked(client, auth):
     mock_result = {
         "booking_id": 42,
-        "status = 'revoked'",
-        "removed_at": "2030-01-01T10:30:00+00:00",
+        "status": "revoked",
+        "revoked_at": "2030-01-01T10:30:00+00:00",
     }
     with patch("src.api.db.revoke_access", return_value=mock_result):
         response = client.post("/bookings/42/access/revoke", headers=auth)
@@ -54,8 +54,8 @@ def test_revoke_access_marks_it_removed(client, auth):
     assert response.status_code == 200
     body = response.get_json()
     assert body["booking_id"] == 42
-    assert body["status = 'revoked'"
-    assert body["removed_at"]
+    assert body["status"] == "revoked"
+    assert body["revoked_at"]
 
 
 def test_expire_access_marks_it_expired(client, auth):
