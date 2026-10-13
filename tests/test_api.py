@@ -42,19 +42,19 @@ def test_create_access_without_the_booking_times_is_400(client, auth):
     assert "error" in response.get_json()
 
 
-def test_remove_access_marks_it_removed(client, auth):
+def test_revoke_access_marks_it_removed(client, auth):
     mock_result = {
         "booking_id": 42,
-        "status": "removed",
+        "status = 'revoked'",
         "removed_at": "2030-01-01T10:30:00+00:00",
     }
-    with patch("src.api.db.remove_access", return_value=mock_result):
-        response = client.post("/bookings/42/access/remove", headers=auth)
+    with patch("src.api.db.revoke_access", return_value=mock_result):
+        response = client.post("/bookings/42/access/revoke", headers=auth)
 
     assert response.status_code == 200
     body = response.get_json()
     assert body["booking_id"] == 42
-    assert body["status"] == "removed"
+    assert body["status = 'revoked'"
     assert body["removed_at"]
 
 
@@ -71,7 +71,7 @@ def test_expire_access_marks_it_expired(client, auth):
 
 PURCHASE_ENDPOINTS = [
     ("/bookings/42/access", "create_access"),
-    ("/bookings/42/access/remove", "remove_access"),
+    ("/bookings/42/access/revoke", "revoke_access"),
     ("/bookings/42/access/expire", "expire_access"),
 ]
 
@@ -151,9 +151,9 @@ def test_check_in_without_a_code_is_400(client):
     assert "error" in response.get_json()
 
 
-def test_remove_access_returns_404_when_not_found(client, auth):
-    with patch("src.api.db.remove_access", return_value=None):
-        response = client.post("/bookings/99/access/remove", headers=auth)
+def test_revoke_access_returns_404_when_not_found(client, auth):
+    with patch("src.api.db.revoke_access", return_value=None):
+        response = client.post("/bookings/99/access/revoke", headers=auth)
 
     assert response.status_code == 404
 
