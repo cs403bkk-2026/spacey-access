@@ -9,14 +9,15 @@ joined to bookings for the space and interval. Writes Access's `access` table.
 - Known facts only: no codes are invented. A row whose booking has no
   start/end keeps those columns empty.
 - Cancellations: an Access row (available or used) whose booking no longer
-  exists in spacey's `bookings` becomes `removed`. Compared against
+  exists in spacey's `bookings` becomes `revoked`. Compared against
   `bookings`, never against spacey's `access` table: codes granted by Access
-  after the switch only exist in Access, and would all be removed.
+  after the switch only exist in Access, and would all be revoked.
+- The target needs migrations 001 and 002 (contract 0.2.0) first.
 
 Usage:
     SOURCE_DATABASE_URL=... TARGET_DATABASE_URL=... python scripts/migrate_from_spacey.py [--apply]
 
-See docs/ACC/production-data-migration.md.
+See docs/production-data-migration.md.
 """
 import argparse
 import os
@@ -36,9 +37,15 @@ SOURCE_QUERY = """
 
 BOOKING_IDS_QUERY = "SELECT id FROM bookings"
 
-MARK_REMOVED = """
+# revoked_at exists only once 002 has run on top of 001.
+TARGET_READY = """
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('access') AND attname = 'revoked_at' AND NOT attisdropped
+"""
+
+MARK_REVOKED = """
     UPDATE access
-    SET status = 'removed', removed_at = now()
+    SET status = 'revoked', revoked_at = now()
     WHERE status IN ('available', 'used')
       AND NOT (booking_id = ANY(%(booking_ids)s))
 """
@@ -71,13 +78,19 @@ def read_source(url: str) -> tuple[list[dict], list[int]]:
     return rows, booking_ids
 
 
-def mark_cancelled_removed(cur, booking_ids: list[int]) -> int:
-    """Set rows whose booking is gone from spacey to `removed`; returns how many.
-    Only available/used rows change: expired and removed rows are final."""
+def target_ready(cur) -> bool:
+    """True if the target's `access` table has migrations 001 and 002."""
+    cur.execute(TARGET_READY)
+    return cur.fetchone() is not None
+
+
+def mark_cancelled_revoked(cur, booking_ids: list[int]) -> int:
+    """Set rows whose booking is gone from spacey to `revoked`; returns how many.
+    Only available/used rows change: expired and revoked rows are final."""
     if not booking_ids:
-        # An empty list would remove every row (wrong database, wrong user).
-        sys.exit("spacey returned no bookings: refusing to mark anything removed")
-    cur.execute(MARK_REMOVED, {"booking_ids": booking_ids})
+        # An empty list would revoke every row (wrong database, wrong user).
+        sys.exit("spacey returned no bookings: refusing to mark anything revoked")
+    cur.execute(MARK_REVOKED, {"booking_ids": booking_ids})
     return cur.rowcount
 
 
@@ -109,9 +122,9 @@ def main() -> None:
 
     with psycopg.connect(target_url) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT to_regclass('access') IS NOT NULL")
-            if not cur.fetchone()[0]:
-                sys.exit("target has no access table: run migrations/001_create_access_table.sql first")
+            if not target_ready(cur):
+                sys.exit("target is not ready: run migrations/001_create_access_table.sql "
+                         "and migrations/002_revoke_and_expiry.sql first")
             cur.execute("SELECT count(*) FROM access")
             before = cur.fetchone()[0]
 
@@ -120,14 +133,14 @@ def main() -> None:
                 cur.execute(INSERT, row)
                 inserted += cur.rowcount
 
-            removed = mark_cancelled_removed(cur, booking_ids)
+            revoked = mark_cancelled_revoked(cur, booking_ids)
 
             cur.execute("SELECT count(*) FROM access")
             after = cur.fetchone()[0]
 
             print(f"target rows: before {before}, after {after}  "
                   f"(inserted {inserted}, already there {len(rows) - inserted})")
-            print(f"cancelled in spacey, marked removed: {removed}")
+            print(f"cancelled in spacey, marked revoked: {revoked}")
 
             if args.apply:
                 conn.commit()

@@ -7,7 +7,6 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request, send_file
-from src.access import issue_access_code
 
 from src import db
 
@@ -17,7 +16,8 @@ api = Blueprint("api", __name__)
 
 
 def require_service_token(view):
-    """Purchase -> Access calls must carry `Authorization: Bearer <SERVICE_TOKEN>`.
+    """All 6 access calls must carry `Authorization: Bearer <SERVICE_TOKEN>`:
+    spacey is their only caller (Frontend and Purchase go through it).
     Checked before anything else, so a bad token is 401 even on a bad body.
     If SERVICE_TOKEN is not set the call is refused, never let through."""
 
@@ -64,38 +64,39 @@ def openapi():
     return send_file(OPENAPI_PATH, mimetype="application/yaml")
 
 
-# --- Purchase -> Access --------------------------------------------------------
+# --- The 6 access functions: spacey -> Access, each with the service token -----
 
 
 @api.post("/bookings/<int:booking_id>/access")
 @require_service_token
-def purchase_create_access(booking_id):
+def create_access(booking_id):
     body = _body("start_time", "end_time")
     if body is None:
         return _missing("start_time", "end_time")
     return jsonify(db.create_access(current_app.db, booking_id, body["start_time"], body["end_time"])), 201
 
 
-@api.post("/bookings/<int:booking_id>/access/remove")
+@api.get("/bookings/<int:booking_id>/access")
 @require_service_token
-def purchase_remove_access(booking_id):
-    result = db.remove_access(current_app.db, booking_id)
+def read_access(booking_id):
+    result = db.read_access(current_app.db, booking_id)
     if result is None:
         return jsonify(error="access record not found"), 404
     return jsonify(result), 200
 
 
-@api.post("/bookings/<int:booking_id>/access/expire")
+@api.post("/bookings/<int:booking_id>/access/revoke")
 @require_service_token
-def purchase_expire_access(booking_id):
-    result = db.expire_access(current_app.db, booking_id)
+def revoke_access(booking_id):
+    result = db.revoke_access(current_app.db, booking_id)
     if result is None:
         return jsonify(error="access record not found"), 404
     return jsonify(result), 200
 
 
 @api.post("/bookings/<int:booking_id>/check-in")
-def frontend_check_in(booking_id):
+@require_service_token
+def check_in(booking_id):
     body = _body("access_code")
     if body is None:
         return _missing("access_code")
@@ -106,14 +107,18 @@ def frontend_check_in(booking_id):
 
 
 @api.post("/bookings/<int:booking_id>/check-out")
-def frontend_check_out(booking_id):
+@require_service_token
+def check_out(booking_id):
     result = db.check_out(current_app.db, booking_id)
     if result is None:
         return jsonify(error="access record not found or not checked in"), 404
     return jsonify(result), 200
 
 
-@api.post("/bookings/<int:booking_id>/unlock")
-def unlock_booking(booking_id):
-    payload, status = issue_access_code(booking_id)
-    return jsonify(payload), status
+@api.post("/bookings/<int:booking_id>/access/expire")
+@require_service_token
+def expire_access(booking_id):
+    result = db.expire_access(current_app.db, booking_id)
+    if result is None:
+        return jsonify(error="access record not found"), 404
+    return jsonify(result), 200
