@@ -75,9 +75,10 @@ moves to a Nomad `access-staging` job together with the next production deploy.
 **Why:** deploying staging to Nomad needs a job-owned variable for its secrets,
 and the SRE's token has no `variables` permission yet. Local staging still tests
 what breaks releases most (the image, migrations on a fresh database, the API),
-but not the Nomad job file, Traefik or TLS. `deploy/access.nomad.hcl` already
-takes `-var="env=staging"` (job, service and router `access-staging`, secrets
-from `nomad/jobs/access-staging`), so the move is a deploy, not a redesign.
+but not the Nomad job file, Traefik or TLS. For the move, `deploy/access.nomad.hcl`
+needs an environment variable for its job ID, service name and Traefik router
+(all hard-coded `access` today), so a staging copy doesn't collide with
+production, and its secrets come from `nomad/jobs/access-staging`.
 
 `compose.staging.yaml` runs a given image against its own database (port
 `5444`, separate from the dev database on `5434`). A one-shot `migrate` service
