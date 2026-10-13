@@ -18,7 +18,21 @@ variable "runtime_variable" {
   type = string
 }
 
+# "production" keeps the original names, so release.yml needs no change.
+# Any other value (e.g. "staging") gets its own job, service and Traefik
+# router, so both copies can run in one cluster without colliding.
+variable "env" {
+  type    = string
+  default = "production"
+}
+
+locals {
+  name = var.env == "production" ? "access" : "access-${var.env}"
+}
+
 job "access" {
+  id          = local.name
+  name        = local.name
   datacenters = ["cs403bkk"]
   namespace   = var.namespace
   type        = "service"
@@ -80,16 +94,16 @@ EOH
       }
 
       service {
-        name     = "access"
+        name     = local.name
         port     = "http"
         provider = "nomad"
 
         tags = [
           "traefik.enable=true",
-          format("traefik.http.routers.access.rule=Host(`%s`)", var.hostname),
-          "traefik.http.routers.access.entrypoints=websecure",
-          "traefik.http.routers.access.tls=true",
-          "traefik.http.routers.access.tls.certresolver=letsencrypt",
+          format("traefik.http.routers.%s.rule=Host(`%s`)", local.name, var.hostname),
+          "traefik.http.routers.${local.name}.entrypoints=websecure",
+          "traefik.http.routers.${local.name}.tls=true",
+          "traefik.http.routers.${local.name}.tls.certresolver=letsencrypt",
         ]
 
         check {

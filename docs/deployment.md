@@ -68,6 +68,50 @@ deployment and either stops the initial job or redeploys the recorded previous
 digest/revision, then verifies health again. This single-instance job does not
 promise uninterrupted updates.
 
+## Staging (local, until the production deploy moves to Nomad)
+
+**Decision:** staging runs with Docker Compose on the SRE's machine for now, and
+moves to a Nomad `access-staging` job together with the next production deploy.
+**Why:** deploying staging to Nomad needs a job-owned variable for its secrets,
+and the SRE's token has no `variables` permission yet. Local staging still tests
+what breaks releases most (the image, migrations on a fresh database, the API),
+but not the Nomad job file, Traefik or TLS. `deploy/access.nomad.hcl` already
+takes `-var="env=staging"` (job, service and router `access-staging`, secrets
+from `nomad/jobs/access-staging`), so the move is a deploy, not a redesign.
+
+`compose.staging.yaml` runs a given image against its own database (port
+`5444`, separate from the dev database on `5434`). A one-shot `migrate` service
+applies `migrations/*.sql` in filename order before the app starts, the way a
+Nomad prestart task would; every file is idempotent, so it runs on every start.
+The token is random per machine and kept in `.staging/` (ignored by Git).
+
+```bash
+scripts/staging.sh up            # build the current checkout and deploy it
+scripts/staging.sh up <image>    # deploy a released image, e.g. ghcr.io/cs403bkk-2026/spacey-access:<sha>
+scripts/staging.sh smoke         # /health, create, repeat create, check-in, no-token refusal
+scripts/staging.sh rollback      # redeploy the previous image, then check /health shows its revision
+scripts/staging.sh status        # containers, current and previous image, /health
+scripts/staging.sh down          # stop, keep the data (reset also deletes it)
+```
+
+`up` only succeeds when `/health` reports the deployed revision. The smoke test
+never prints an access code or the token.
+
+**Found while rehearsing the first real release (2026-10-13/14):**
+
+- `/health` is `ok` on a database with **no** `access` table: it runs `SELECT 1`
+  only. It proves the connection, not the schema, so a deploy also needs the
+  smoke test.
+- Without the table, every create is a `500` (`UndefinedTable`). Nothing in the
+  image or `release.yml` applies migrations, and the image doesn't contain
+  `migrations/`. Production needs `001` applied before the next release.
+- Applying `001` twice is safe (`already exists, skipping`).
+- A repeat create for the same booking is a `500` (`UniqueViolation`), against
+  the "safe to retry" contract. The smoke test keeps failing on this until it is
+  fixed.
+- Rollback practised: current checkout → `5d07ee8` release → `rollback`, with
+  `/health` showing the expected revision after each step.
+
 ## SRE handoff
 
 Amp checks the approved deployment workflow with her own access, reads

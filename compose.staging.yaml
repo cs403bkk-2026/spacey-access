@@ -1,0 +1,60 @@
+# Local staging (stop-gap until the Nomad access-staging job, see
+# docs/deployment.md). Runs a given image against its own empty-at-start
+# database, applying migrations before the app starts, like a real release.
+#
+# Use scripts/staging.sh, not this file directly: it picks the image, the
+# revision and the token, and remembers the previous image for rollback.
+name: access-staging
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: access
+      POSTGRES_PASSWORD: access
+      POSTGRES_DB: access
+    ports:
+      - "5444:5432"
+    volumes:
+      - staging-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U access -d access"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Applies migrations/*.sql in filename order, then exits. Every file is
+  # idempotent, so this runs on every start, like a Nomad prestart task would.
+  migrate:
+    image: postgres:16
+    environment:
+      PGPASSWORD: access
+    volumes:
+      - ./migrations:/migrations:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        for f in /migrations/*.sql; do
+          echo "applying $$f"
+          psql -v ON_ERROR_STOP=1 -h db -U access -d access -q -f "$$f"
+        done
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    image: ${ACCESS_IMAGE:?set by scripts/staging.sh}
+    environment:
+      APP_REVISION: ${ACCESS_REVISION:?set by scripts/staging.sh}
+      DATABASE_URL: postgresql://access:access@db:5432/access
+      SERVICE_TOKEN: ${STAGING_SERVICE_TOKEN:?set by scripts/staging.sh}
+    ports:
+      - "8023:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  staging-db-data:
