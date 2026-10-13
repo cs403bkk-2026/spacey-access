@@ -2,7 +2,7 @@
 
 Short version: **call our HTTP API, never our database.** The contract is
 [`openapi.yaml`](../openapi.yaml) (live at `GET /openapi.yaml`); [api.md](api.md) is the readable
-table. Every endpoint exists, answering with **dummy** values until the real logic lands.
+table. Every endpoint exists, answering with real SQL; the full lifecycle rules (403, 409, lazy expiry) arrive in Phase 2.
 
 ## Purchase (`spacey`)
 
@@ -19,15 +19,15 @@ sequenceDiagram
     P-->>M: 200 {booking_id, access_code}  (unchanged contract)
     Note over M,P: later: the booking is cancelled
     M->>P: DELETE /bookings/42
-    P->>A: POST /bookings/42/access/remove
-    A-->>P: 200 {status: removed}
+    P->>A: POST /bookings/42/access/revoke
+    A-->>P: 200 {status: revoked}
     P->>P: cancel the booking (Purchase's own rule)
 ```
 
 | You do | Call | Notes |
 |---|---|---|
 | Unlock for a **paid** booking | `POST /bookings/{id}/access` with the booking's start and end | **You** check that the booking is paid; we don't. Safe to retry: the same code comes back |
-| Cancel a booking | `POST /bookings/{id}/access/remove` **before** your own cancel | Safe to retry. We keep the record |
+| Cancel a booking | `POST /bookings/{id}/access/revoke` **before** your own cancel | Safe to retry. We keep the record |
 | The booking ended (your clock) | `POST /bookings/{id}/access/expire` | Safe to retry |
 | *(we call you)* access ended (our clock) | `POST {PURCHASE_URL}/bookings/{id}/access-expired` | **You add this endpoint.** Not sent until it exists |
 

@@ -18,7 +18,7 @@ key and the shared Purchase/Access service token in its `service_token`
 key. Neither secret may be passed as a job argument, committed, or copied into
 GitHub. The Nomad job exposes the token to Access as `SERVICE_TOKEN`.
 
-Purchase sends the same secret as a Bearer token on create, remove, and expire
+`spacey` sends the same secret as a Bearer token on all 6 access functions
 calls. Provision it only through the platform's secret store;
 Purchase's CI callers should use their CI secret store. Tests use a disposable
 fixture token, not the deployed secret.

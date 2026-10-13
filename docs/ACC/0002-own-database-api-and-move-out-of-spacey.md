@@ -5,6 +5,9 @@ Date: 2026-10-08
 Status: Proposed by the Access team. Not started: only the working skeleton exists (ACC 0001).
 Needs agreement from Purchase, Frontend and the SRE (see "Needs agreement").
 
+> **Superseded vocabulary:** `remove`/`removed` (and check-out re-entry) are `revoke`/`revoked` and no
+> re-entry since `openapi.yaml` 0.2.0 (ACC-13, migration 002). The text below is kept as written.
+
 **Decision:** on top of the skeleton, Access becomes the `spacey-access` service with **its own
 database** (one `access` table) and **its own HTTP API**. Frontend and Purchase call it; Access's
 only outgoing call is the expiry notice to Purchase. It moves out of `spacey` in four steps, with a one-time copy of the existing codes.

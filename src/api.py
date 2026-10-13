@@ -92,6 +92,7 @@ def purchase_read_access(booking_id):
         return jsonify(error="access record not found"), 404
     return jsonify(result), 200
 
+
 @api.post("/bookings/<int:booking_id>/access/expire")
 @require_service_token
 def purchase_expire_access(booking_id):
@@ -102,6 +103,7 @@ def purchase_expire_access(booking_id):
 
 
 @api.post("/bookings/<int:booking_id>/check-in")
+@require_service_token
 def frontend_check_in(booking_id):
     body = _body("access_code")
     if body is None:
@@ -113,6 +115,7 @@ def frontend_check_in(booking_id):
 
 
 @api.post("/bookings/<int:booking_id>/check-out")
+@require_service_token
 def frontend_check_out(booking_id):
     result = db.check_out(current_app.db, booking_id)
     if result is None:

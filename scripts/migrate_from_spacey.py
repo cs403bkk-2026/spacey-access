@@ -8,10 +8,10 @@ joined to bookings for the space and interval. Writes Access's `access` table.
   never overwritten (rows granted by Access after cutover stay as they are).
 - Known facts only: no codes are invented. A row whose booking has no
   start/end keeps those columns empty.
-- Cancellations: an Access row (available or used) whose booking no longer
-  exists in spacey's `bookings` becomes `removed`. Compared against
-  `bookings`, never against spacey's `access` table: codes granted by Access
-  after the switch only exist in Access, and would all be removed.
+- Cancellations: an `available` Access row whose booking no longer exists in
+  spacey's `bookings` becomes `revoked`. Compared against `bookings`, never
+  against spacey's `access` table: codes granted by Access after the switch
+  only exist in Access, and would all be revoked.
 
 Usage:
     SOURCE_DATABASE_URL=... TARGET_DATABASE_URL=... python scripts/migrate_from_spacey.py [--apply]
@@ -36,10 +36,10 @@ SOURCE_QUERY = """
 
 BOOKING_IDS_QUERY = "SELECT id FROM bookings"
 
-MARK_REMOVED = """
+MARK_REVOKED = """
     UPDATE access
-    SET status = 'removed', removed_at = now()
-    WHERE status IN ('available', 'used')
+    SET status = 'revoked', revoked_at = now()
+    WHERE status = 'available'
       AND NOT (booking_id = ANY(%(booking_ids)s))
 """
 
@@ -71,13 +71,13 @@ def read_source(url: str) -> tuple[list[dict], list[int]]:
     return rows, booking_ids
 
 
-def mark_cancelled_removed(cur, booking_ids: list[int]) -> int:
-    """Set rows whose booking is gone from spacey to `removed`; returns how many.
-    Only available/used rows change: expired and removed rows are final."""
+def mark_cancelled_revoked(cur, booking_ids: list[int]) -> int:
+    """Set rows whose booking is gone from spacey to `revoked`; returns how many.
+    Only `available` rows change: used, expired and revoked are final."""
     if not booking_ids:
-        # An empty list would remove every row (wrong database, wrong user).
-        sys.exit("spacey returned no bookings: refusing to mark anything removed")
-    cur.execute(MARK_REMOVED, {"booking_ids": booking_ids})
+        # An empty list would revoke every row (wrong database, wrong user).
+        sys.exit("spacey returned no bookings: refusing to mark anything revoked")
+    cur.execute(MARK_REVOKED, {"booking_ids": booking_ids})
     return cur.rowcount
 
 
@@ -120,14 +120,14 @@ def main() -> None:
                 cur.execute(INSERT, row)
                 inserted += cur.rowcount
 
-            removed = mark_cancelled_removed(cur, booking_ids)
+            revoked = mark_cancelled_revoked(cur, booking_ids)
 
             cur.execute("SELECT count(*) FROM access")
             after = cur.fetchone()[0]
 
             print(f"target rows: before {before}, after {after}  "
                   f"(inserted {inserted}, already there {len(rows) - inserted})")
-            print(f"cancelled in spacey, marked removed: {removed}")
+            print(f"cancelled in spacey, marked revoked: {revoked}")
 
             if args.apply:
                 conn.commit()

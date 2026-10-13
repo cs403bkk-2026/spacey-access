@@ -20,7 +20,7 @@ def service_token(monkeypatch):
 
 @pytest.fixture()
 def auth(service_token):
-    """Headers Purchase sends on create, remove and expire."""
+    """Headers spacey sends: all 6 access functions need the token."""
     return {"Authorization": f"Bearer {service_token}"}
 
 

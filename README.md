@@ -14,9 +14,9 @@ This module owns everything related to issuing and managing access codes for con
 
 ```text
 available → used          (check-in)
-used → available          (check-out / re-entry)
-available/used → expired  (booking end time passed)
-available/used → removed  (booking cancelled by Purchase)
+used → used               (check-out: records checked_out_at, no re-entry)
+available → expired       (booking end time passed)
+available → revoked       (booking cancelled or refunded by Purchase)
 ```
 
 For the full business rules, see [spacey-business-rules](https://github.com/cs403bkk-2026/spacey-business-rules).
@@ -62,11 +62,11 @@ flask --app app run --port 8003 --debug
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql://access:access@localhost:5434/access` | Postgres connection string. The app exits at start with a clear message if it can't connect |
-| `SERVICE_TOKEN` | *(none)* | Shared secret for Purchase ↔ Access. Purchase sends it as `Authorization: Bearer <token>` on create, remove and expire; without it those calls get `401`. In production it comes from the Nomad variable (key `service_token`), never from Git |
+| `SERVICE_TOKEN` | *(none)* | Shared secret for Purchase ↔ Access. Purchase sends it as `Authorization: Bearer <token>` on all 6 access functions; without it those calls get `401`. In production it comes from the Nomad variable (key `service_token`), never from Git |
 | `APP_REVISION` | `local` | Shown by `/health`, so a deployment can confirm which commit is live |
 The Nomad runtime variable at the configured `RUNTIME_VARIABLE` path stores the
 secret under `service_token`; the job exposes it as `SERVICE_TOKEN`.
-Purchase sends it as a Bearer token when creating, removing, or expiring access.
+`spacey` sends it as a Bearer token on all 6 access functions.
 Keep the value in platform and CI secret stores only. Never commit a `.env` file
 or real credentials. The values in `compose.yaml` are local placeholders.
 
@@ -113,11 +113,13 @@ The manual [release workflow](.github/workflows/release.yml) tests, publishes an
 spacey-access/
 ├── app.py                 # Entry point: create_app(), routes (/health, /openapi.yaml)
 ├── src/
-│   ├── db.py              # Database connection (DATABASE_URL, fail fast)
-│   └── access.py          # Core logic: issue, check_in, check_out, expire, remove
+│   ├── api.py             # HTTP only: the 6 access functions, token check
+│   ├── db.py              # All SQL: create, read, revoke, check_in, check_out, expire
+│   └── purchase_client.py # Access -> Purchase expiry notice
 ├── openapi.yaml           # The API contract, served at /openapi.yaml
 ├── migrations/
-│   └── 001_create_access_table.sql
+│   ├── 001_create_access_table.sql
+│   └── 002_revoke_and_expiry.sql
 ├── tests/
 │   ├── test_health.py
 │   └── test_access.py

@@ -19,7 +19,7 @@ flowchart LR
     SB --> J
     J -->|"INSERT … ON CONFLICT (booking_id) DO NOTHING"| TA
     SB -->|"booking ids still in spacey"| R{{"booking gone?"}}
-    R -->|"available or used → removed"| TA
+    R -->|"available → revoked"| TA
 ```
 
 | Target column | Comes from |
@@ -28,21 +28,21 @@ flowchart LR
 | `space_id`, `booked_start_time`, `booked_end_time` | `spacey` `bookings` (read **once**, here only) |
 | `expires_at` | `booked_end_time` |
 | `status` | `expired` if the booking has ended, otherwise `available`. Nobody has checked in yet: check-in is new |
-| `checked_in_at`, `checked_out_at`, `removed_at` | empty: these events never happened in `spacey` |
+| `checked_in_at`, `checked_out_at`, `revoked_at`, `expired_at` | empty: these events never happened in `spacey` |
 
 ### Cancellations
 
 In `spacey`, cancelling a booking deletes its access row (`ON DELETE CASCADE`), so a cancelled booking
 is never copied. But a booking can be cancelled **after** an earlier run has already copied it, for
-example between steps 4 and 6 of the runbook. So every run also marks as `removed` each Access row
+example between steps 4 and 6 of the runbook. So every run also marks as `revoked` each Access row
 whose booking no longer exists in `spacey`'s **`bookings`** table.
 
 - **Compared against `bookings`, never against `spacey`'s `access` table.** After the switch, new codes
-  exist only in Access. Comparing against `spacey`'s `access` would remove all of them.
-- Only `available` and `used` rows change. `expired` and `removed` rows are final (see
-  [database.md](database.md)). `removed_at` is set once: a later run keeps the first one.
+  exist only in Access. Comparing against `spacey`'s `access` would revoke all of them.
+- Only `available` rows change. `used`, `expired` and `revoked` rows are final (see
+  [database.md](database.md)). `revoked_at` is set once: a later run keeps the first one.
 - The script stops, changing nothing, if `spacey` returns no bookings at all. That means a wrong
-  database or user, and would otherwise remove every row.
+  database or user, and would otherwise revoke every row.
 
 ## Safety
 
@@ -58,7 +58,7 @@ whose booking no longer exists in `spacey`'s **`bookings`** table.
 | # | Step | Who |
 |---|---|---|
 | 1 | Snapshot both databases | SRE |
-| 2 | Run `migrations/001_create_access_table.sql` on Access's database | Access |
+| 2 | Run `migrations/001_create_access_table.sql`, then `migrations/002_revoke_and_expiry.sql`, on Access's database | Access |
 | 3 | Dry run: `SOURCE_DATABASE_URL=<spacey, read-only user> TARGET_DATABASE_URL=<access> python scripts/migrate_from_spacey.py`. Check the counts | Access |
 | 4 | `… --apply` | Access |
 | 5 | Switch `spacey`'s `/unlock` to forward to Access (Purchase deploy) | Purchase |
@@ -75,10 +75,10 @@ second run, and existing codes are untouched.
 SELECT count(*), count(DISTINCT access_code) FROM access;
 -- Access (target): the same numbers, or more if Access granted new codes since
 SELECT count(*), count(DISTINCT access_code) FROM access;
-SELECT status, count(*) FROM access GROUP BY 1;   -- available / expired, plus removed for cancelled bookings
+SELECT status, count(*) FROM access GROUP BY 1;   -- available / expired, plus revoked for cancelled bookings
 ```
 
-The script prints `cancelled in spacey, marked removed: N`. Cross-check it: the ids behind `N` must not
+The script prints `cancelled in spacey, marked revoked: N`. Cross-check it: the ids behind `N` must not
 be in `spacey`'s `bookings`.
 
 Then the journey: an **existing** booking's `/unlock` returns the **same** code as before the cutover.
@@ -99,10 +99,10 @@ And with cancellations (2026-10-09), stand-in `spacey` with 3 bookings, then boo
 
 | Run | Result |
 |---|---|
-| `--apply` | 3 rows copied, `marked removed: 0` |
-| booking 3 cancelled in `spacey`, dry run | `marked removed: 1`, nothing written |
-| `--apply` | booking 3 is `removed` with `removed_at` set |
-| `--apply` again | inserted 0, `marked removed: 0`, `removed_at` unchanged |
+| `--apply` | 3 rows copied, `marked revoked: 0` |
+| booking 3 cancelled in `spacey`, dry run | `marked revoked: 1`, nothing written |
+| `--apply` | booking 3 is `revoked` with `revoked_at` set |
+| `--apply` again | inserted 0, `marked revoked: 0`, `revoked_at` unchanged |
 
 **Not tested against production data.** Run the dry run on a copy of production first (below).
 
@@ -111,7 +111,7 @@ And with cancellations (2026-10-09), stand-in `spacey` with 3 bookings, then boo
 With the SRE: a **copy** of `spacey`'s production database as the source and an empty copy of Access's
 database as the target. Never the live databases.
 
-1. Run `migrations/001_create_access_table.sql` on the Access copy.
+1. Run `migrations/001_create_access_table.sql`, then `migrations/002_revoke_and_expiry.sql`, on the Access copy.
 2. `SOURCE_DATABASE_URL=<spacey copy, read-only user> TARGET_DATABASE_URL=<access copy> python scripts/migrate_from_spacey.py`
 3. `… --apply`, then run it a **second** time with `--apply`.
 4. Run the queries under **Verify**.
@@ -122,6 +122,6 @@ Record the result in the ACC-11 issue:
 |---|---|---|
 | source rows | = `SELECT count(*) FROM access` on the copy of `spacey` | |
 | target rows after first `--apply` | = source rows | |
-| second `--apply` | `inserted 0`, `marked removed: 0` | |
-| `marked removed` on first run | number of access rows without a booking (expected 0 on a clean copy) | |
+| second `--apply` | `inserted 0`, `marked revoked: 0` | |
+| `marked revoked` on first run | number of access rows without a booking (expected 0 on a clean copy) | |
 | `count(DISTINCT access_code)` | same in source and target | |

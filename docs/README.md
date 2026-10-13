@@ -22,7 +22,7 @@ Decision records live in [`ACC/`](ACC/), named `####-Title.md`:
 ```mermaid
 flowchart LR
     FE["Frontend<br/>spacey-frontend"] -->|"check-in / check-out"| ACC
-    PUR["Purchase<br/>spacey"] -->|"create · remove · expire<br/>(after its paid check)"| ACC
+    PUR["Purchase<br/>spacey"] -->|"create · revoke · expire<br/>(after its paid check)"| ACC
     subgraph ACC["Access · spacey-access"]
         API["src/api.py"] --> DBM["src/db.py"]
     end

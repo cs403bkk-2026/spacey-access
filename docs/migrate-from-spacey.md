@@ -24,7 +24,7 @@ Inventory checked on `spacey` `main` at `17c7d2d` (2026-10-08). The decision is 
 ```mermaid
 flowchart LR
     S1["1 · Inside spacey<br/>access.py → access/ package<br/>(own migrations, no bookings read)"]
-    S2["2 · spacey-access ready<br/>create/remove/expire endpoints,<br/>own DB, deployed, /health ok"]
+    S2["2 · spacey-access ready<br/>the 6 access functions,<br/>own DB, deployed, /health ok"]
     S3["3 · Cutover<br/>copy rows → switch /unlock<br/>to forward → verify"]
     S4["4 · Clean up spacey<br/>remove access/ package,<br/>access table, TRUNCATE entry"]
     S1 --> S2 --> S3 --> S4
@@ -34,7 +34,7 @@ flowchart LR
 | Step | Done when |
 |---|---|
 | 1 | All unlock tests green; `access` DDL out of `purchase/schema.py`; Access code doesn't read `bookings` |
-| 2 | `spacey-access` deployed; `/health` 200; create, remove and expire endpoints tested against our `openapi.yaml` |
+| 2 | `spacey-access` deployed; `/health` 200; the 6 access functions tested against our `openapi.yaml` |
 | 3 | Row count copied = row count in `spacey`; `/unlock` answers the same code as before for an existing booking; a new booking gets a code from Access |
 | 4 | `spacey` has no Access code or table left; its suite is green |
 
@@ -44,6 +44,6 @@ short, or copy them back (to decide, D4).
 
 ## Needs agreement first
 
-- **Purchase:** the forwarding in `/unlock`, calling `access/remove` on cancel, and owning the paid check
+- **Purchase:** the forwarding in `/unlock`, calling `access/revoke` on cancel, and owning the paid check
 - **Frontend:** nothing for unlock (unchanged); the check-in/check-out request is separate
 - **SRE / platform:** Access's database, Nomad job and routing (D3)

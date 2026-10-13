@@ -15,15 +15,15 @@ flowchart TB
         APP["app.py"] --> API["src/api.py"] --> DBM["src/db.py"]
     end
     FE -->|"/bookings/{id}/unlock (today)"| PUR
-    FE -->|"check-in, check-out (dummy)"| API
-    PUR -->|"create, remove, expire (dummy)"| API
+    FE -->|"check-in, check-out"| API
+    PUR -->|"create, read, revoke, expire"| API
     PUR --- SDB[("spacey database")]
     PAY --- SDB
     DBM --- ADB[("Access database")]
 ```
 
 - **Who calls Access:** Frontend (check-in, check-out) and Purchase (creating access after its paid
-  check, removing it on cancellation, expiring it by Purchase's clock).
+  check, revoking it on cancellation, expiring it by Purchase's clock).
 - **Who Access calls:** only Purchase, to report that access expired by Access's clock (`src/purchase_client.py`; a dummy that sends nothing yet). It never reads `spacey`'s database. Anything it needs (booking id,
   start and end) is passed in.
 - **Data:** Access has **its own database**, holding only the `access` table ([database.md](database.md)).
@@ -43,7 +43,7 @@ flowchart LR
 |---|---|---|
 | `app.py` | Build the Flask app, connect to the database, register `src/api.py` | Hold business rules |
 | `src/api.py` | HTTP only: parse, validate shape, call `db.py`, answer exactly as `openapi.yaml` says | Run SQL |
-| `src/db.py` | Each operation (grant, check-in, check-out, remove, expire, read) as SQL, with the rule checks next to the SQL that enforces them. The **only** file that talks to Postgres | Know about HTTP |
+| `src/db.py` | Each operation (create, read, revoke, check-in, check-out, expire) as SQL, with the rule checks next to the SQL that enforces them. The **only** file that talks to Postgres | Know about HTTP |
 | `openapi.yaml` | The contract, served at `GET /openapi.yaml` | Drift from the code (tests check it) |
 
 **Today's skeleton** has `app.py` (with `/health` and `/openapi.yaml` routes), `src/db.py` (the
