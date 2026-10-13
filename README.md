@@ -156,3 +156,5 @@ spacey-access/
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Team notes:** [Access team document (Google Docs)](https://docs.google.com/document/d/1xZHmVhBWWa1D5uDfRjvZlovhoP5y1Y06YUV-Y4uFfw0/edit?usp=sharing)
