@@ -8,7 +8,9 @@ or an incident report.
 **Before you start:** say in the team channel that you are looking at it (that makes
 you the Incident Commander until you hand over), and note the time.
 
-Common checks used below:
+Common checks used below. First, the platform dashboard **"Request availability by
+service"** (Grafana, folder *Availability*), row **Access**: edge success %, eligible
+requests, failed (5xx or 499) and other 4xx, per time bucket.
 
 ```bash
 # Is the job running, and since when?
@@ -50,7 +52,9 @@ or use a code.
 
 **Means:** ≥ 5 responses were 5xx in 5 minutes. SEV2.
 
-1. Which paths and statuses? Read the request lines in the logs.
+1. When did it start, and is it still going? The dashboard's Access "Outcomes per
+   bucket" panel shows failed requests per time bucket. Then read the request lines
+   in the logs for the paths and statuses.
 2. **Did a deploy just happen?** Compare `/health`'s `revision` with the last release run.
    If yes, run the smoke checks; if they fail, roll back (Rollback runbook).
 3. **Is the schema right?** A missing table or column gives 500s while `/health` stays
