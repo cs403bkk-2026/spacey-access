@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# Local staging for Access (stop-gap until the Nomad access-staging job).
+# Local integration test for Access. Runs on a developer machine; not staging.
 #
-#   scripts/staging.sh up [IMAGE]   deploy IMAGE (or build the checkout), then smoke
-#   scripts/staging.sh smoke        the 0.2.0 API checks on their own
-#   scripts/staging.sh rollback     redeploy the previous image, then smoke
-#   scripts/staging.sh status       containers, deployed image, /health
-#   scripts/staging.sh logs         app logs
-#   scripts/staging.sh down         stop (keeps the database)
-#   scripts/staging.sh reset        stop and delete the database
+#   scripts/local-test.sh up [IMAGE]   deploy IMAGE (or build the checkout), then smoke
+#   scripts/local-test.sh smoke        the 0.2.0 API checks on their own
+#   scripts/local-test.sh rollback     redeploy the previous image, then smoke
+#   scripts/local-test.sh status       containers, deployed image, /health
+#   scripts/local-test.sh logs         app logs
+#   scripts/local-test.sh down         stop (keeps the database)
+#   scripts/local-test.sh reset        stop and delete the database
 #
 # Never prints an access code or the token.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-STATE=.staging
+STATE=.local-test
 URL=http://127.0.0.1:8023
-COMPOSE=(docker compose -f compose.staging.yaml)
+COMPOSE=(docker compose -f compose.local.yaml)
 
 mkdir -p "$STATE"
 chmod 700 "$STATE"
 
 # For commands that only look at or stop what is running; compose still wants
 # the variables set, but their values don't matter there.
-inspect() { ACCESS_IMAGE=- ACCESS_REVISION=- STAGING_SERVICE_TOKEN=- "${COMPOSE[@]}" "$@"; }
+inspect() { ACCESS_IMAGE=- ACCESS_REVISION=- LOCAL_SERVICE_TOKEN=- "${COMPOSE[@]}" "$@"; }
 
 token() {
   if [ ! -s "$STATE/token" ]; then
@@ -35,7 +35,7 @@ token() {
 # commit sha (release images are tagged that way), otherwise the whole ref.
 revision_of() {
   local tag="${1##*:}"
-  tag="${tag#staging-}"
+  tag="${tag#local-}"
   if [[ "$tag" =~ ^[0-9a-f]{40}(-dirty)?$ ]]; then echo "$tag"; else echo "$1"; fi
 }
 
@@ -45,15 +45,15 @@ build_checkout() {
   if [ -n "$(git status --porcelain -- app.py gunicorn.conf.py openapi.yaml src migrations requirements.txt Dockerfile)" ]; then
     sha="$sha-dirty"
   fi
-  docker build -q -t "spacey-access:staging-$sha" . >/dev/null
-  echo "spacey-access:staging-$sha"
+  docker build -q -t "spacey-access:local-$sha" . >/dev/null
+  echo "spacey-access:local-$sha"
 }
 
 deploy() {
   local image="$1" revision
   revision=$(revision_of "$image")
   echo "deploying $image"
-  if ! ACCESS_IMAGE="$image" ACCESS_REVISION="$revision" STAGING_SERVICE_TOKEN="$(token)" \
+  if ! ACCESS_IMAGE="$image" ACCESS_REVISION="$revision" LOCAL_SERVICE_TOKEN="$(token)" \
     "${COMPOSE[@]}" up -d --wait --wait-timeout 120 >"$STATE/up.log" 2>&1; then
     echo "deploy FAILED:"; tail -20 "$STATE/up.log"
     return 1

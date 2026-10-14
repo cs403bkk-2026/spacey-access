@@ -1,10 +1,10 @@
-# Local staging (stop-gap until the Nomad access-staging job, see
+# Local integration test for Access. Not a staging environment (see
 # docs/deployment.md). Runs a given image against its own empty-at-start
 # database, applying migrations before the app starts, like a real release.
 #
-# Use scripts/staging.sh, not this file directly: it picks the image, the
+# Use scripts/local-test.sh, not this file directly: it picks the image, the
 # revision and the token, and remembers the previous image for rollback.
-name: access-staging
+name: access-local
 
 services:
   db:
@@ -16,7 +16,7 @@ services:
     ports:
       - "5444:5432"
     volumes:
-      - staging-db-data:/var/lib/postgresql/data
+      - local-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U access -d access"]
       interval: 2s
@@ -28,7 +28,7 @@ services:
   # idempotent, so this runs on every start, the shape of a Nomad prestart task.
   # Images built before migrations/ was copied in have none: nothing is applied.
   migrate:
-    image: ${ACCESS_IMAGE:?set by scripts/staging.sh}
+    image: ${ACCESS_IMAGE:?set by scripts/local-test.sh}
     environment:
       DATABASE_URL: postgresql://access:access@db:5432/access
     entrypoint:
@@ -49,11 +49,11 @@ services:
         condition: service_healthy
 
   app:
-    image: ${ACCESS_IMAGE:?set by scripts/staging.sh}
+    image: ${ACCESS_IMAGE:?set by scripts/local-test.sh}
     environment:
-      APP_REVISION: ${ACCESS_REVISION:?set by scripts/staging.sh}
+      APP_REVISION: ${ACCESS_REVISION:?set by scripts/local-test.sh}
       DATABASE_URL: postgresql://access:access@db:5432/access
-      SERVICE_TOKEN: ${STAGING_SERVICE_TOKEN:?set by scripts/staging.sh}
+      SERVICE_TOKEN: ${LOCAL_SERVICE_TOKEN:?set by scripts/local-test.sh}
     ports:
       - "8023:8000"
     depends_on:
@@ -61,4 +61,4 @@ services:
         condition: service_completed_successfully
 
 volumes:
-  staging-db-data:
+  local-db-data:
