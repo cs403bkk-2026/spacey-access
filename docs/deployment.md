@@ -100,7 +100,7 @@ Nomad's `auto_revert`.)
 **First deploy:** there is nothing to revert to. Stop the job
 (`nomad job stop -namespace access access`) and fix forward.
 
-**Staging:** `scripts/staging.sh rollback` redeploys the previous image and only
+**Local test:** `scripts/local-test.sh rollback` redeploys the previous image and only
 reports success when `/health` shows its revision **and** the smoke test passes.
 Practised twice on 2026-10-14:
 
@@ -109,34 +109,36 @@ Practised twice on 2026-10-14:
   broken"** (`/health` ok; read → 405, revoke → 404) → `rollback` to the
   checkout → smoke passes. This is the case `/health` alone can't see.
 
-## Staging (local, until the production deploy moves to Nomad)
+## Local integration test
 
-**Decision:** staging runs with Docker Compose on the SRE's machine for now, and
-moves to a Nomad `access-staging` job together with the next production deploy.
-**Why:** deploying staging to Nomad needs a job-owned variable for its secrets,
-and the SRE's token has no `variables` permission yet. Local staging still tests
-what breaks releases most (the image, migrations on a fresh database, the API),
-but not the Nomad job file, Traefik or TLS. For the move, `deploy/access.nomad.hcl`
-needs an environment variable for its job ID, service name and Traefik router
-(all hard-coded `access` today), so a staging copy doesn't collide with
-production, and its secrets come from `nomad/jobs/access-staging`.
+**This is not a staging environment.** There is no shared staging environment
+yet. Until there is, a developer can run Access (and `spacey`, its caller) with
+Docker Compose on their own machine before merging. That tests what breaks
+releases most (the image, migrations on a fresh database, the API), but not the
+Nomad job file, Traefik or TLS, and nobody else can reach it.
 
-`compose.staging.yaml` runs a given image against its own database (port
+A real staging environment needs a platform decision, e.g. a Nomad
+`access-staging` job with its own job-owned variable (`nomad/jobs/access-staging`;
+the SRE token has no `variables` permission yet). `deploy/access.nomad.hcl` would
+then need an environment variable for its job ID, service name and Traefik router
+(all hard-coded `access` today), so the copy doesn't collide with production.
+
+`compose.local.yaml` runs a given image against its own database (port
 `5444`, separate from the dev database on `5434`). A one-shot `migrate` service
 applies the migrations **shipped in that same image** (`/app/migrations`, copied
-in by the `Dockerfile`) in filename order before the app starts, so staging only
+in by the `Dockerfile`) in filename order before the app starts, so the local test only
 ever runs code/schema pairs that production would. This is the shape of the Nomad
 prestart task later. Every file is idempotent, so it runs on every start. Images
 built before `migrations/` was copied in apply nothing. The token is random per
-machine and kept in `.staging/` (ignored by Git and Docker).
+machine and kept in `.local-test/` (ignored by Git and Docker).
 
 ```bash
-scripts/staging.sh up            # build the current checkout, deploy it, then smoke
-scripts/staging.sh up <image>    # same for a released image, e.g. ghcr.io/cs403bkk-2026/spacey-access:<sha>
-scripts/staging.sh smoke         # the API checks on their own, plus spacey -> Access
-scripts/staging.sh rollback      # redeploy the previous image, then smoke
-scripts/staging.sh status        # containers, current and previous image, /health of both
-scripts/staging.sh down          # stop, keep the data (reset also deletes it)
+scripts/local-test.sh up            # build the current checkout, deploy it, then smoke
+scripts/local-test.sh up <image>    # same for a released image, e.g. ghcr.io/cs403bkk-2026/spacey-access:<sha>
+scripts/local-test.sh smoke         # the API checks on their own, plus spacey -> Access
+scripts/local-test.sh rollback      # redeploy the previous image, then smoke
+scripts/local-test.sh status        # containers, current and previous image, /health of both
+scripts/local-test.sh down          # stop, keep the data (reset also deletes it)
 ```
 
 `up` and `rollback` only succeed when `/health` reports the deployed revision
@@ -147,15 +149,15 @@ a token. A gap the team already tracks is reported as `KNOWN` and doesn't fail t
 deploy (today: repeat create → 500, Phase 2). The smoke test never prints an
 access code or the token.
 
-**`spacey` reaches Access.** Staging also runs `spacey`, Access's only caller,
+**`spacey` reaches Access.** The local test also runs `spacey`, Access's only caller,
 from its released image (`ghcr.io/cs403bkk-2026/spacey:<sha>`, by default the
 image of `spacey`'s current `main`; `SPACEY_IMAGE=<image>` picks another), with its
 own database and the two settings it uses for Access:
 
-| Setting | Staging value |
+| Setting | Local value |
 |---|---|
 | `ACCESS_URL` | `http://app:8000` (Access on the Compose network) |
-| `SERVICE_TOKEN` | the same staging token Access uses |
+| `SERVICE_TOKEN` | the same local token Access uses |
 
 The smoke test runs two requests **from inside the `spacey` container**, with
 `spacey`'s own settings: `${ACCESS_URL}/health` → 200, and an authenticated read
@@ -174,8 +176,8 @@ are `amd64` only, so on an ARM laptop they run under emulation.
   image or `release.yml` applies migrations, and the image doesn't contain
   `migrations/`. Production turned out to have no table either; fixed on
   2026-10-14 (see "Production schema").
-- Applying `001` twice is safe (`already exists, skipping`). Staging applies `001`
-  and `002` on every start.
+- Applying `001` twice is safe (`already exists, skipping`). The local test applies
+  `001` and `002` on every start.
 - A repeat create for the same booking is a `500` (`UniqueViolation`), against
   the "safe to retry" contract. Still true on 0.2.0 (2026-10-14); the smoke test
   reports it as `KNOWN` until it is fixed.
@@ -187,20 +189,20 @@ One line of why each. "Proposed" means it needs the team's agreement before it c
 
 | Topic | Decision | Why |
 |---|---|---|
-| Staging | Docker Compose on the SRE's machine now (`scripts/staging.sh`); a Nomad `access-staging` job later | No Nomad `variables` permission for staging secrets yet; local staging still catches image, migration and API problems |
-| Databases per environment | Production: database `access`. Staging: its own Postgres container. Never shared | Staging creates and resets data; production records are never deleted (SP-R12) |
-| Secrets per environment | One token and database URL per environment: production in `nomad/jobs/access`, local staging in `.staging/` (random per machine), Nomad staging later in `nomad/jobs/access-staging` | A staging token must never open production |
-| Release per environment | A push to `main` deploys to production. Staging runs **before** merging (`scripts/staging.sh up` + `smoke` on the PR branch) | The workflow has no staging step yet, so staging must happen before the merge |
-| Migrations | The image ships `migrations/` (`Dockerfile`), and staging applies them from the deployed image. **Production today:** manual (D7), applied **before** merging the release that needs them. **Proposed:** a Nomad prestart task that runs the image's migrations, like staging's `migrate` service | Production ran without its table because nobody applied `001`. Running migrations from the image keeps code and schema paired; all files are idempotent |
+| Staging | **None yet.** Meanwhile a local integration test (`scripts/local-test.sh`, Docker Compose on a developer machine). A real staging (e.g. a Nomad `access-staging` job) needs a platform decision | A laptop isn't a shared environment; the local test still catches image, migration and API problems before a merge |
+| Databases per environment | Production: database `access`. Local test: its own Postgres container. Never shared | Tests create and reset data; production records are never deleted (SP-R12) |
+| Secrets per environment | One token and database URL per environment: production in `nomad/jobs/access`, local test in `.local-test/` (random per machine), a future staging in `nomad/jobs/access-staging` | A test token must never open production |
+| Release per environment | A push to `main` deploys to production. The local test runs **before** merging (`scripts/local-test.sh up` on the PR branch) | There is no staging environment or staging step in the workflow, so testing must happen before the merge |
+| Migrations | The image ships `migrations/` (`Dockerfile`), and the local test applies them from the deployed image. **Production today:** manual (D7), applied **before** merging the release that needs them. **Proposed:** a Nomad prestart task that runs the image's migrations, like the local test's `migrate` service | Production ran without its table because nobody applied `001`. Running migrations from the image keeps code and schema paired; all files are idempotent |
 | Rollback across a migration | Only if the migration is backward-compatible with the older code; `002` is not | Old code on a newer schema stays healthy but breaks (`478efb0` on `002`: revoke/remove fail) |
-| Service-to-service routing | Production: `spacey` reaches Access through the public hostname, `ACCESS_URL=https://access.cs403bkk26.space`. Staging: `ACCESS_URL=http://app:8000` on the Compose network, checked by the smoke test from inside `spacey` | `spacey` (namespace `startup`) and Access (namespace `access`) are in different namespaces; Nomad's built-in service discovery only works within a namespace |
+| Service-to-service routing | Production: `spacey` reaches Access through the public hostname, `ACCESS_URL=https://access.cs403bkk26.space`. Local test: `ACCESS_URL=http://app:8000` on the Compose network, checked by the smoke test from inside `spacey` | `spacey` (namespace `startup`) and Access (namespace `access`) are in different namespaces; Nomad's built-in service discovery only works within a namespace |
 | Health | `/health` (`SELECT 1`) stays a liveness check for Nomad's routing and `auto_revert`. After a deploy, also run the smoke test | It proves the connection, not the schema or the API: it was green with no table |
 | Restart on failed health | No `check_restart` on `/health` | A restart can't fix a database outage; it only adds noise |
 | Restart policy | **Proposed:** `restart { attempts = 3, interval = "5m", mode = "fail" }`, like `spacey` | Access uses Nomad's defaults today, unlike `spacey`; a crash loop should stop and be visible |
 | Logging | Follow `docs/logging.md` (ACC-13.5): `key=value` lines, never the access code, token or `DATABASE_URL` | One searchable format in Loki; secrets must not leak |
 | Dashboards and alerts | Grafana dashboard and alert rules come from ACC-14 (#44) | Thresholds need the log signals from ACC-13.5 and a week of baseline |
 | Rollback | See "Rollback runbook" | `auto_revert` only covers unhealthy releases, not "healthy but wrong" |
-| Backups | Rely on the platform's `pg-backup` job (namespace `postgres`, checked 2026-10-14): a periodic batch job that `pg_dump -Fc`s **every** database except `postgres`/`template*`, so `access` is included, to `/backup/<db>_<time>.dump` on the `pgbackup` host volume, about 4 times a day (102 runs since 19 Sep), keeping `RETENTION_DAYS`. Restore procedure rehearsed on staging: `pg_dump -Fc` → `pg_restore` into a new database gave identical rows, columns, check and data checksum. **Still for the platform owner:** confirm the latest run succeeded and restore one real `access_*.dump` once (the SRE token can't list runs or read the host volume) | Access records are never deleted (SP-R12); they are the audit trail. Note that dumps taken before 2026-10-14 have no `access` table |
+| Backups | Rely on the platform's `pg-backup` job (namespace `postgres`, checked 2026-10-14): a periodic batch job that `pg_dump -Fc`s **every** database except `postgres`/`template*`, so `access` is included, to `/backup/<db>_<time>.dump` on the `pgbackup` host volume, about 4 times a day (102 runs since 19 Sep), keeping `RETENTION_DAYS`. Restore procedure rehearsed in the local test: `pg_dump -Fc` → `pg_restore` into a new database gave identical rows, columns, check and data checksum. **Still for the platform owner:** confirm the latest run succeeded and restore one real `access_*.dump` once (the SRE token can't list runs or read the host volume) | Access records are never deleted (SP-R12); they are the audit trail. Note that dumps taken before 2026-10-14 have no `access` table |
 | Mock in production | No production job sets `MOCK=1` (`deploy/access.nomad.hcl` doesn't). The ARCH-01 mock refuses to start when `DATABASE_URL` is set | A mock would hand out fake codes |
 | Capacity and placement | Keep `count = 1`, pinned to `cs403bkk-nomad-1` | Simple, and enough for a course cluster; a node problem or a deploy means short downtime, accepted on purpose |
 
