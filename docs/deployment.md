@@ -133,9 +133,9 @@ machine and kept in `.staging/` (ignored by Git and Docker).
 ```bash
 scripts/staging.sh up            # build the current checkout, deploy it, then smoke
 scripts/staging.sh up <image>    # same for a released image, e.g. ghcr.io/cs403bkk-2026/spacey-access:<sha>
-scripts/staging.sh smoke         # the API checks on their own
+scripts/staging.sh smoke         # the API checks on their own, plus spacey -> Access
 scripts/staging.sh rollback      # redeploy the previous image, then smoke
-scripts/staging.sh status        # containers, current and previous image, /health
+scripts/staging.sh status        # containers, current and previous image, /health of both
 scripts/staging.sh down          # stop, keep the data (reset also deletes it)
 ```
 
@@ -146,6 +146,24 @@ runs the full `SELECT`), create, read back, check-in, revoke, and refusal withou
 a token. A gap the team already tracks is reported as `KNOWN` and doesn't fail the
 deploy (today: repeat create → 500, Phase 2). The smoke test never prints an
 access code or the token.
+
+**`spacey` reaches Access.** Staging also runs `spacey`, Access's only caller,
+from its released image (`ghcr.io/cs403bkk-2026/spacey:<sha>`, by default the
+image of `spacey`'s current `main`; `SPACEY_IMAGE=<image>` picks another), with its
+own database and the two settings it uses for Access:
+
+| Setting | Staging value |
+|---|---|
+| `ACCESS_URL` | `http://app:8000` (Access on the Compose network) |
+| `SERVICE_TOKEN` | the same staging token Access uses |
+
+The smoke test runs two requests **from inside the `spacey` container**, with
+`spacey`'s own settings: `${ACCESS_URL}/health` → 200, and an authenticated read
+of an unknown booking → 404 (a `401` would mean the tokens differ, and `000`
+means Access is unreachable). This is a network-level check: `spacey`'s Access
+client (ARCH-02) doesn't exist yet. Verified 2026-10-14 with `spacey` `10060a6`:
+both pass, and both fail (`000`) when Access is stopped. Released `spacey` images
+are `amd64` only, so on an ARM laptop they run under emulation.
 
 **Found while rehearsing the first real release (2026-10-13/14):**
 
@@ -175,7 +193,7 @@ One line of why each. "Proposed" means it needs the team's agreement before it c
 | Release per environment | A push to `main` deploys to production. Staging runs **before** merging (`scripts/staging.sh up` + `smoke` on the PR branch) | The workflow has no staging step yet, so staging must happen before the merge |
 | Migrations | The image ships `migrations/` (`Dockerfile`), and staging applies them from the deployed image. **Production today:** manual (D7), applied **before** merging the release that needs them. **Proposed:** a Nomad prestart task that runs the image's migrations, like staging's `migrate` service | Production ran without its table because nobody applied `001`. Running migrations from the image keeps code and schema paired; all files are idempotent |
 | Rollback across a migration | Only if the migration is backward-compatible with the older code; `002` is not | Old code on a newer schema stays healthy but breaks (`478efb0` on `002`: revoke/remove fail) |
-| Service-to-service routing | `spacey` reaches Access through the public hostname: `ACCESS_URL=https://access.cs403bkk26.space` | `spacey` (namespace `startup`) and Access (namespace `access`) are in different namespaces; Nomad's built-in service discovery only works within a namespace |
+| Service-to-service routing | Production: `spacey` reaches Access through the public hostname, `ACCESS_URL=https://access.cs403bkk26.space`. Staging: `ACCESS_URL=http://app:8000` on the Compose network, checked by the smoke test from inside `spacey` | `spacey` (namespace `startup`) and Access (namespace `access`) are in different namespaces; Nomad's built-in service discovery only works within a namespace |
 | Health | `/health` (`SELECT 1`) stays a liveness check for Nomad's routing and `auto_revert`. After a deploy, also run the smoke test | It proves the connection, not the schema or the API: it was green with no table |
 | Restart on failed health | No `check_restart` on `/health` | A restart can't fix a database outage; it only adds noise |
 | Restart policy | **Proposed:** `restart { attempts = 3, interval = "5m", mode = "fail" }`, like `spacey` | Access uses Nomad's defaults today, unlike `spacey`; a crash loop should stop and be visible |

@@ -2,12 +2,15 @@
 # Local staging for Access (stop-gap until the Nomad access-staging job).
 #
 #   scripts/staging.sh up [IMAGE]   deploy IMAGE (or build the checkout), then smoke
-#   scripts/staging.sh smoke        the 0.2.0 API checks on their own
+#   scripts/staging.sh smoke        the 0.2.0 API checks, plus spacey -> Access
 #   scripts/staging.sh rollback     redeploy the previous image, then smoke
 #   scripts/staging.sh status       containers, deployed image, /health
 #   scripts/staging.sh logs         app logs
 #   scripts/staging.sh down         stop (keeps the database)
 #   scripts/staging.sh reset        stop and delete the database
+#
+# spacey runs next to Access as its caller: SPACEY_IMAGE=<image> picks it,
+# otherwise the image of spacey's current main is used.
 #
 # Never prints an access code or the token.
 set -euo pipefail
@@ -22,7 +25,24 @@ chmod 700 "$STATE"
 
 # For commands that only look at or stop what is running; compose still wants
 # the variables set, but their values don't matter there.
-inspect() { ACCESS_IMAGE=- ACCESS_REVISION=- STAGING_SERVICE_TOKEN=- "${COMPOSE[@]}" "$@"; }
+inspect() {
+  ACCESS_IMAGE=- ACCESS_REVISION=- SPACEY_IMAGE=- SPACEY_REVISION=- STAGING_SERVICE_TOKEN=- \
+    "${COMPOSE[@]}" "$@"
+}
+
+# spacey's image: $SPACEY_IMAGE if given, else the published image of spacey's
+# main (release images are tagged with the commit sha).
+spacey_image() {
+  if [ -n "${SPACEY_IMAGE:-}" ]; then echo "$SPACEY_IMAGE"; return; fi
+  local sha image
+  sha=$(git ls-remote https://github.com/cs403bkk-2026/spacey refs/heads/main | cut -f1)
+  image="ghcr.io/cs403bkk-2026/spacey:$sha"
+  if [ -z "$sha" ] || ! docker manifest inspect "$image" >/dev/null 2>&1; then
+    echo "no published spacey image for main ($sha); set SPACEY_IMAGE=<image>" >&2
+    return 1
+  fi
+  echo "$image"
+}
 
 token() {
   if [ ! -s "$STATE/token" ]; then
@@ -50,11 +70,13 @@ build_checkout() {
 }
 
 deploy() {
-  local image="$1" revision
+  local image="$1" revision spacey
   revision=$(revision_of "$image")
-  echo "deploying $image"
-  if ! ACCESS_IMAGE="$image" ACCESS_REVISION="$revision" STAGING_SERVICE_TOKEN="$(token)" \
-    "${COMPOSE[@]}" up -d --wait --wait-timeout 120 >"$STATE/up.log" 2>&1; then
+  spacey=$(spacey_image) || return 1
+  echo "deploying $image (spacey: ${spacey##*/})"
+  if ! ACCESS_IMAGE="$image" ACCESS_REVISION="$revision" \
+    SPACEY_IMAGE="$spacey" SPACEY_REVISION="$(revision_of "$spacey")" STAGING_SERVICE_TOKEN="$(token)" \
+    "${COMPOSE[@]}" up -d --wait --wait-timeout 300 >"$STATE/up.log" 2>&1; then
     echo "deploy FAILED:"; tail -20 "$STATE/up.log"
     return 1
   fi
@@ -96,6 +118,19 @@ call() { # method path [json]
   curl "${args[@]}"
 }
 
+# Runs inside the spacey container and calls ${ACCESS_URL}<path> with spacey's
+# own SERVICE_TOKEN, so it proves spacey's settings, not the host's. Prints only
+# the status code (000 = Access unreachable).
+from_spacey() { # path
+  inspect exec -T spacey python -c '
+import os, sys, urllib.request, urllib.error
+req = urllib.request.Request(os.environ["ACCESS_URL"] + sys.argv[1],
+                             headers={"Authorization": "Bearer " + os.environ["SERVICE_TOKEN"]})
+try: print(urllib.request.urlopen(req, timeout=3).status)
+except urllib.error.HTTPError as e: print(e.code)
+except Exception: print("000")' "$1" 2>/dev/null || echo "000"
+}
+
 # The 0.2.0 contract, so old code on a newer schema (or the reverse) fails here
 # even when /health is green.
 smoke() {
@@ -115,6 +150,10 @@ smoke() {
   check "revoke it" 200 "$(call POST "/bookings/$((id + 1))/access/revoke")"
   check "create without token is refused" 401 \
     "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/bookings/$((id + 2))/access" -H 'Content-Type: application/json' -d "$body")"
+
+  # ARCH-03: spacey, with its ACCESS_URL and SERVICE_TOKEN, reaches Access.
+  check "spacey reaches Access /health (from inside spacey)" 200 "$(from_spacey /health)"
+  check "spacey's token is accepted (read unknown booking)" 404 "$(from_spacey /bookings/2147480000/access)"
 
   rm -f "$STATE/resp"
   echo "$PASS passed, $FAIL failed, $KNOWN known gaps"
@@ -140,7 +179,8 @@ case "${1:-}" in
     inspect ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
     echo "current:  $(cat "$STATE/current" 2>/dev/null || echo none)"
     echo "previous: $(cat "$STATE/previous" 2>/dev/null || echo none)"
-    curl -s "$URL/health" || echo "not reachable"; echo ;;
+    echo -n "access: "; curl -s "$URL/health" || echo -n "not reachable"; echo
+    echo -n "spacey: "; curl -s http://127.0.0.1:8024/health || echo -n "not reachable"; echo ;;
   logs)     inspect logs app ;;
   down)     inspect down ;;
   reset)    inspect down -v
