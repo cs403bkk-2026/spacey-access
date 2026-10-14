@@ -10,6 +10,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py gunicorn.conf.py openapi.yaml ./
 COPY src/ src/
+# Shipped with the code so a deploy can apply the schema this revision expects
+# (staging's migrate service today, a Nomad prestart task later).
+COPY migrations/ migrations/
 
 EXPOSE 8000
 

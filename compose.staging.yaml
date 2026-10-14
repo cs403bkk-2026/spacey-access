@@ -23,23 +23,27 @@ services:
       timeout: 3s
       retries: 30
 
-  # Applies migrations/*.sql in filename order, then exits. Every file is
-  # idempotent, so this runs on every start, like a Nomad prestart task would.
+  # Applies the migrations shipped *in the deployed image* (/app/migrations), in
+  # filename order, one transaction per file, then exits. Every file is
+  # idempotent, so this runs on every start, the shape of a Nomad prestart task.
+  # Images built before migrations/ was copied in have none: nothing is applied.
   migrate:
-    image: postgres:16
+    image: ${ACCESS_IMAGE:?set by scripts/staging.sh}
     environment:
-      PGPASSWORD: access
-    volumes:
-      - ./migrations:/migrations:ro
+      DATABASE_URL: postgresql://access:access@db:5432/access
     entrypoint:
-      - sh
+      - python
       - -c
       - |
-        set -e
-        for f in /migrations/*.sql; do
-          echo "applying $$f"
-          psql -v ON_ERROR_STOP=1 -h db -U access -d access -q -f "$$f"
-        done
+        import glob, os, psycopg
+        files = sorted(glob.glob("/app/migrations/*.sql"))
+        if not files:
+            print("image has no migrations/: nothing applied")
+        with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+            for path in files:
+                print("applying", os.path.basename(path))
+                conn.execute(open(path).read())
+                conn.commit()
     depends_on:
       db:
         condition: service_healthy

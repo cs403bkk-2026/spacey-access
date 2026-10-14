@@ -101,10 +101,12 @@ Nomad's `auto_revert`.)
 1. **Find the last good revision:** `nomad job history -namespace access access`
    (versions with their `revision` meta), or the previous successful `release` run
    in GitHub Actions (its image digest and SHA).
-2. **Check the schema still fits the old code.** Migrations only move forward.
-   Old code on a newer schema can fail: for example `478efb0` (0.1) on migration
-   `002` fails on `/access/remove`, because `removed_at` became `revoked_at`.
-   If it doesn't fit, roll forward with a fix instead.
+2. **Check the schema still fits the old code.** Migrations only move forward, so a
+   rollback **across a migration** only works if that migration is
+   backward-compatible with the older code. **`002` is not:** it renames
+   `removed_at` to `revoked_at`, so `478efb0` (0.1) on the `002` schema is healthy
+   but breaks (`/access/remove` → 500 `UndefinedColumn`). If the schema doesn't
+   fit, fix forward instead of rolling back.
 3. **Redeploy the old revision,** in one of two ways:
    - `nomad job revert -namespace access access <version>`, or
    - the manual `nomad job run` above, with the recorded `IMAGE` digest and `REVISION`.
@@ -120,8 +122,13 @@ Nomad's `auto_revert`.)
 (`nomad job stop -namespace access access`) and fix forward.
 
 **Staging:** `scripts/staging.sh rollback` redeploys the previous image and only
-reports success when `/health` shows its revision. Practised on 2026-10-14:
-`0a1b0ab` → `5d07ee8` → back to `0a1b0ab`.
+reports success when `/health` shows its revision **and** the smoke test passes.
+Practised twice on 2026-10-14:
+
+- before `002` existed: `0a1b0ab` → `5d07ee8` → back to `0a1b0ab`, all healthy;
+- with `002`: checkout (0.2.0) → `478efb0` (0.1) → `up` reports **"deployed but
+  broken"** (`/health` ok; read → 405, revoke → 404) → `rollback` to the
+  checkout → smoke passes. This is the case `/health` alone can't see.
 
 ## Staging (local, until the production deploy moves to Nomad)
 
@@ -137,21 +144,29 @@ production, and its secrets come from `nomad/jobs/access-staging`.
 
 `compose.staging.yaml` runs a given image against its own database (port
 `5444`, separate from the dev database on `5434`). A one-shot `migrate` service
-applies `migrations/*.sql` in filename order before the app starts, the way a
-Nomad prestart task would; every file is idempotent, so it runs on every start.
-The token is random per machine and kept in `.staging/` (ignored by Git).
+applies the migrations **shipped in that same image** (`/app/migrations`, copied
+in by the `Dockerfile`) in filename order before the app starts, so staging only
+ever runs code/schema pairs that production would. This is the shape of the Nomad
+prestart task later. Every file is idempotent, so it runs on every start. Images
+built before `migrations/` was copied in apply nothing. The token is random per
+machine and kept in `.staging/` (ignored by Git and Docker).
 
 ```bash
-scripts/staging.sh up            # build the current checkout and deploy it
-scripts/staging.sh up <image>    # deploy a released image, e.g. ghcr.io/cs403bkk-2026/spacey-access:<sha>
-scripts/staging.sh smoke         # /health, create, repeat create, check-in, no-token refusal
-scripts/staging.sh rollback      # redeploy the previous image, then check /health shows its revision
+scripts/staging.sh up            # build the current checkout, deploy it, then smoke
+scripts/staging.sh up <image>    # same for a released image, e.g. ghcr.io/cs403bkk-2026/spacey-access:<sha>
+scripts/staging.sh smoke         # the API checks on their own
+scripts/staging.sh rollback      # redeploy the previous image, then smoke
 scripts/staging.sh status        # containers, current and previous image, /health
 scripts/staging.sh down          # stop, keep the data (reset also deletes it)
 ```
 
-`up` only succeeds when `/health` reports the deployed revision. The smoke test
-never prints an access code or the token.
+`up` and `rollback` only succeed when `/health` reports the deployed revision
+**and** the smoke test passes, because `/health` alone is green on a broken API.
+The smoke test follows the 0.2.0 contract: read of an unknown booking (404, which
+runs the full `SELECT`), create, read back, check-in, revoke, and refusal without
+a token. A gap the team already tracks is reported as `KNOWN` and doesn't fail the
+deploy (today: repeat create → 500, Phase 2). The smoke test never prints an
+access code or the token.
 
 **Found while rehearsing the first real release (2026-10-13/14):**
 
@@ -165,10 +180,9 @@ never prints an access code or the token.
 - Applying `001` twice is safe (`already exists, skipping`). Staging applies `001`
   and `002` on every start.
 - A repeat create for the same booking is a `500` (`UniqueViolation`), against
-  the "safe to retry" contract. Still true on 0.2.0 (`808a4c4`, 2026-10-14); the
-  smoke test keeps failing on this until it is fixed.
-- Rollback practised: current checkout → `5d07ee8` release → `rollback`, with
-  `/health` showing the expected revision after each step.
+  the "safe to retry" contract. Still true on 0.2.0 (2026-10-14); the smoke test
+  reports it as `KNOWN` until it is fixed.
+- Rollback: see "Rollback runbook" (practised before and after `002`).
 
 ## Decisions (ARCH-03)
 
@@ -180,7 +194,8 @@ One line of why each. "Proposed" means it needs the team's agreement before it c
 | Databases per environment | Production: database `access`. Staging: its own Postgres container. Never shared | Staging creates and resets data; production records are never deleted (SP-R12) |
 | Secrets per environment | One token and database URL per environment: production in `nomad/jobs/access`, local staging in `.staging/` (random per machine), Nomad staging later in `nomad/jobs/access-staging` | A staging token must never open production |
 | Release per environment | A push to `main` deploys to production. Staging runs **before** merging (`scripts/staging.sh up` + `smoke` on the PR branch) | The workflow has no staging step yet, so staging must happen before the merge |
-| Migrations | **Today:** manual (D7), applied to production **before** merging the release that needs them. **Proposed:** a Nomad prestart task that applies `migrations/*.sql`, plus `COPY migrations/` in the `Dockerfile` | Production ran without its table because nobody applied `001`. All files are idempotent, which staging's `migrate` service already proves |
+| Migrations | The image ships `migrations/` (`Dockerfile`), and staging applies them from the deployed image. **Production today:** manual (D7), applied **before** merging the release that needs them. **Proposed:** a Nomad prestart task that runs the image's migrations, like staging's `migrate` service | Production ran without its table because nobody applied `001`. Running migrations from the image keeps code and schema paired; all files are idempotent |
+| Rollback across a migration | Only if the migration is backward-compatible with the older code; `002` is not | Old code on a newer schema stays healthy but breaks (`478efb0` on `002`: revoke/remove fail) |
 | Service-to-service routing | `spacey` reaches Access through the public hostname: `ACCESS_URL=https://access.cs403bkk26.space` | `spacey` (namespace `startup`) and Access (namespace `access`) are in different namespaces; Nomad's built-in service discovery only works within a namespace |
 | Health | `/health` (`SELECT 1`) stays a liveness check for Nomad's routing and `auto_revert`. After a deploy, also run the smoke test | It proves the connection, not the schema or the API: it was green with no table |
 | Restart on failed health | No `check_restart` on `/health` | A restart can't fix a database outage; it only adds noise |
