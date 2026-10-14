@@ -1,7 +1,8 @@
 # Access service documentation
 
-Status: **proposed** by the Access team, 2026-10-08. What exists today is only the working skeleton
-(`GET /health`, `GET /openapi.yaml`). Everything else here is the plan.
+Status: **proposed** by the Access team, 2026-10-08; contract **0.2.0** since 2026-10-13 (ARCH-02).
+All 6 access endpoints exist with real SQL, but not yet the full lifecycle: [api.md](api.md) lists
+the gaps, which Phase 2 closes.
 
 | Doc | For | What's in it |
 |---|---|---|
@@ -21,13 +22,16 @@ Decision records live in [`ACC/`](ACC/), named `####-Title.md`:
 
 ```mermaid
 flowchart LR
-    FE["Frontend<br/>spacey-frontend"] -->|"check-in / check-out"| ACC
-    PUR["Purchase<br/>spacey"] -->|"create · remove · expire<br/>(after its paid check)"| ACC
+    FE["Frontend<br/>spacey-frontend"] -->|"spacey's routes"| SP
+    subgraph SPACEY["spacey (the only caller)"]
+        PUR["purchase/<br/>paid check"] --> SP["access package<br/>6 access functions"]
+    end
+    SP -->|"create · read · revoke · check-in · check-out · expire<br/>(HTTP + service token)"| ACC
     subgraph ACC["Access · spacey-access"]
         API["src/api.py"] --> DBM["src/db.py"]
     end
     DBM --> PG[("Access database<br/>access table")]
-    ACC -.->|"expiry notice<br/>(dummy, not sent yet)"| PUR
+    ACC -.->|"expiry notice<br/>(dummy, not sent yet)"| SPACEY
 ```
 
 ## Open decisions (affect several docs)
@@ -35,8 +39,8 @@ flowchart LR
 | # | Decision | Where it matters |
 |---|---|---|
 | D1 | **Decided: `status`** — matches `migrations/001` and Payments; no rename needed | database, api, migration script |
-| D2 | **Decided: shared bearer token for Purchase ↔ Access**; browser → Access authentication remains open | api, for-other-teams |
-| D3 | Routing: how the browser reaches Access (a path on the same site, or its own host) | for-other-teams, migrate-from-spacey |
+| D2 | **Decided: shared bearer token**, on all 6 access calls since 0.2.0. The browser never calls Access: everything goes through `spacey` | api, for-other-teams |
+| D3 | Routing: the base URL `spacey` uses to reach Access (the browser no longer does) | for-other-teams, migrate-from-spacey |
 | D4 | What `spacey`'s `/unlock` answers while Access is down | migrate-from-spacey |
 | D5 | Does check-in refuse a code at the wrong space (Q9)? | database, api |
 | D6 | May a moved expiry make `expired` access `available` again (Q11)? Default: no | database, api |

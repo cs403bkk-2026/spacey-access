@@ -14,14 +14,13 @@ path so its workload identity can read it without broader variable permissions.
 The runtime database is `access`, with login `locks_user`, membership role
 `team_access`, and ownership limited to that database's `public` schema. The
 platform owner stores the connection URL in the runtime variable's `database_url`
-key and the shared Purchase/Access service token in its `service_token`
+key and the shared spacey/Access service token in its `service_token`
 key. Neither secret may be passed as a job argument, committed, or copied into
 GitHub. The Nomad job exposes the token to Access as `SERVICE_TOKEN`.
 
-Purchase sends the same secret as a Bearer token on create, remove, and expire
-calls. Provision it only through the platform's secret store;
-Purchase's CI callers should use their CI secret store. Tests use a disposable
-fixture token, not the deployed secret.
+`spacey` sends the same secret as a Bearer token on all 6 access calls. Provision
+it only through the platform's secret store; `spacey`'s CI should use its CI
+secret store. Tests use a disposable fixture token, not the deployed secret.
 
 Before release, the platform owner checks:
 

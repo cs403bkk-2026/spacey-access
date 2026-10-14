@@ -1,7 +1,28 @@
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
 import psycopg
 import pytest
+from psycopg.rows import dict_row
 
-from src.db import get_connection
+from src import db
+from src.db import DATABASE_URL, get_connection
+
+MIGRATIONS = Path(__file__).parent.parent / "migrations"
+START = "2030-01-01T10:00:00+00:00"
+END = "2030-01-01T11:00:00+00:00"
+
+
+@pytest.fixture()
+def conn():
+    """The real SQL in src/db.py on the migrated table (001 + 002), rolled back after."""
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        conn.execute((MIGRATIONS / "001_create_access_table.sql").read_text())
+        conn.execute((MIGRATIONS / "002_revoke_and_expiry.sql").read_text())
+        conn.execute("DELETE FROM access")
+        yield conn
+        conn.rollback()
 
 
 def test_connection_failure_does_not_disclose_credentials(monkeypatch):
@@ -19,3 +40,32 @@ def test_connection_failure_does_not_disclose_credentials(monkeypatch):
     assert database_url not in str(failure.value)
     assert "private-password" not in str(failure.value)
     assert failure.value.__suppress_context__
+
+
+def test_read_access_returns_the_full_record(conn):
+    db.create_access(conn, 42, START, END)
+
+    record = db.read_access(conn, 42)
+
+    assert set(record) == {
+        "booking_id", "access_code", "status", "expires_at",
+        "checked_in_at", "checked_out_at", "revoked_at", "expired_at",
+    }
+    assert record["status"] == "available"
+    assert record["expires_at"] == datetime(2030, 1, 1, 11, tzinfo=timezone.utc)
+    well_formed = re.fullmatch("[0-9a-f]{8}", record["access_code"]) is not None
+    assert well_formed, "access_code is not 8 lowercase hex characters"  # never print the code
+
+
+def test_read_access_of_an_unknown_booking_is_none(conn):
+    assert db.read_access(conn, 99) is None
+
+
+def test_revoke_access_sets_revoked_and_revoked_at(conn):
+    db.create_access(conn, 42, START, END)
+
+    result = db.revoke_access(conn, 42)
+
+    assert result["status"] == "revoked"
+    assert result["revoked_at"] is not None
+    assert db.read_access(conn, 42)["status"] == "revoked"
