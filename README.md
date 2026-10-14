@@ -67,6 +67,21 @@ docker compose up db -d
 flask --app app run --port 8003 --debug
 ```
 
+### Run the mock (MOCK=1, no database)
+
+For spacey's tests and demos. The data is kept in memory and follows the
+0.2.0 contract (openapi.yaml). It is lost on restart, and
+`POST /_mock/reset` (with the token) empties it. `/health` says `"mode": "mock"`.
+
+```bash
+MOCK=1 SERVICE_TOKEN=dev-token gunicorn --workers 1 --bind 0.0.0.0:8013 "app:create_app()"
+```
+
+Use **one worker only**: each gunicorn worker is its own process with its own
+memory, so with 2 workers a record created by one would be missing in the other.
+The app refuses to start if `MOCK=1` and `DATABASE_URL` are both set.
+Never use the mock in production.
+
 ### Environment variables
 
 | Variable | Default | Description |

@@ -10,7 +10,13 @@ def test_health_reports_ok_and_revision(monkeypatch):
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.get_json() == {"status": "ok", "revision": "abc123"}
+    assert response.get_json() == {"status": "ok", "mode": "real", "revision": "abc123"}
+
+
+def test_reset_does_not_exist_outside_mock_mode(auth):
+    response = create_app().test_client().post("/_mock/reset", headers=auth)
+
+    assert response.status_code == 404
 
 
 def test_health_is_503_when_the_database_is_unreachable():
