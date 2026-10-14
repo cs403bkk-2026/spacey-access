@@ -4,8 +4,9 @@
 
 | Layer | Files | What it tests |
 |-------|-------|---------------|
-| Unit | `test_access.py` | Business logic functions in isolation (mocked DB cursor) |
-| Integration | `test_health.py`, `test_db.py` | Full request against a real test database |
+| Contract | `test_openapi.py` | `openapi.yaml` is valid OpenAPI 3.0 (0.2.0), every example passes as the request or response it documents, and the app serves exactly its routes |
+| API | `test_api.py`, `test_health.py` | Each route's status codes and the service token on all 6 access calls (`src/db.py` patched in `test_api.py`) |
+| Database | `test_db.py`, `test_migration_002.py`, `test_migrate_from_spacey.py` | The real SQL, migration 002 and the data copy on Postgres, inside transactions that are rolled back |
 
 ## Fixtures (`conftest.py`)
 
@@ -13,6 +14,8 @@
 |---------|------------------|
 | `app` | A Flask test app instance |
 | `client` | A test client to make HTTP requests |
+| `service_token` | Sets `SERVICE_TOKEN=test-token` for every test (autouse) |
+| `auth` | The `Authorization: Bearer` header `spacey` sends on all 6 access calls |
 | `check_schema` | Helper to assert status code and JSON content type |
 
 ## Naming

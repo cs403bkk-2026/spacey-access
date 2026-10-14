@@ -13,14 +13,14 @@ def app():
 
 @pytest.fixture(autouse=True)
 def service_token(monkeypatch):
-    """The shared Purchase <-> Access token (ACC-08), set for every test."""
+    """The shared spacey <-> Access token (ACC-08), set for every test."""
     monkeypatch.setenv("SERVICE_TOKEN", "test-token")
     return "test-token"
 
 
 @pytest.fixture()
 def auth(service_token):
-    """Headers Purchase sends on create, remove and expire."""
+    """Headers spacey sends on all 6 access calls."""
     return {"Authorization": f"Bearer {service_token}"}
 
 

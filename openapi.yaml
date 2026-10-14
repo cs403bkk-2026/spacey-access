@@ -1,191 +1,466 @@
 openapi: "3.0.3"
 info:
   title: spacey-access
-  version: "0.1.0"
-  description: >
-    Access service for spacey. Manages access codes and room check-in/check-out.
-    Purchase owns the paid check; Access never reads the bookings table.
+  version: "0.2.0"
+  description: |
+    Access service for spacey. One access record per booking, and 6 functions on it:
+    create, read, revoke, check-in, check-out and expire.
+
+    **Only spacey calls Access.** Frontend and Purchase reach these endpoints through
+    spacey's access functions, never directly, so all 6 require the service token.
+    Purchase owns the paid check; Access never reads spacey's database.
+    `/health` and `/openapi.yaml` stay open.
+
+    **Lifecycle.** Every transition starts from `available`; `used`, `expired` and
+    `revoked` are final. Check-out changes no status: it records `checked_out_at` on a
+    `used` record, once. Repeating a call that already happened answers `200` with the
+    same record. Any other move is a `409` that carries the current `status`, changes
+    nothing and writes one log line without the access code. Records are never deleted.
+
+    **Time first.** On read, check-in and expire, an `available` record whose
+    `expires_at` has passed becomes `expired` (with `expired_at` set) before the action.
+
+    | Status ↓ / action → | check-in (right code) | check-out | revoke | expire | read |
+    |---|---|---|---|---|---|
+    | **available** | `200` → `used` | `409` | `200` → `revoked` | `200` → `expired` | `200` |
+    | **used** | `200` same record | `200`, sets `checked_out_at` once; repeat `200` same | `409` | `409` | `200` |
+    | **expired** | `409` | `409` | `409` | `200` same record | `200` |
+    | **revoked** | `409` | `409` | `200` same record | `409` | `200` |
+
+    Unknown booking: `404` for every action except create. Errors are `{"error": "..."}`;
+    times are ISO 8601 with an offset.
+
+# Real mode (src/db.py) has these paths and names; the lifecycle above is Phase 2.
+# docs/api.md lists the gaps.
 
 paths:
   /health:
     get:
+      operationId: health
       summary: Service and database health
       responses:
         "200":
-          description: OK
+          description: The service runs and its database answers
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
-                  revision:
-                    type: string
+                $ref: "#/components/schemas/Health"
+              examples:
+                ok:
+                  value: { status: ok, revision: "0a1b0ab" }
         "503":
-          description: Database unreachable
+          description: The database is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              examples:
+                databaseUnreachable:
+                  value: { status: error, error: database unreachable }
 
   /openapi.yaml:
     get:
+      operationId: openapi
       summary: This contract
       responses:
         "200":
-          description: YAML document
+          description: This document, as YAML
+          content:
+            application/yaml:
+              schema:
+                type: string
+              examples:
+                contract:
+                  value: |
+                    openapi: "3.0.3"
+                    info:
+                      title: spacey-access
+                      version: "0.2.0"
 
-  # --- Purchase -> Access -------------------------------------------------
-  # Responses are DUMMY for now (fixed values); 403/404/409 come with the real logic.
+  # --- The 6 access functions (spacey -> Access) -------------------------------
 
   /bookings/{booking_id}/access:
+    parameters:
+      - $ref: "#/components/parameters/BookingId"
     post:
-      summary: Create the access record for a paid booking (Purchase)
-      description: Purchase checks payment before calling this. Requires the shared service token.
+      operationId: create_access
+      summary: Create the access record (for Purchase, after its paid check)
+      description: >
+        No record yet: `201` with a new `available` record and its code; `expires_at`
+        is the `end_time` sent. A record already exists, in any status: `200` with that
+        record unchanged, even if the times differ, so create is safe to repeat.
       security:
-        - ServiceToken: []
-      parameters:
-        - $ref: "#/components/parameters/BookingId"
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [start_time, end_time]
-              properties:
-                start_time: { type: string, format: date-time }
-                end_time: { type: string, format: date-time }
+              $ref: "#/components/schemas/CreateAccess"
+            examples:
+              booking:
+                value: { start_time: "2026-10-20T09:00:00+07:00", end_time: "2026-10-20T10:00:00+07:00" }
       responses:
         "201":
-          description: Access created
+          description: Created
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  booking_id: { type: integer }
-                  access_code: { type: string, example: "00000000" }
-                  status: { type: string, example: available }
-                  expires_at: { type: string, format: date-time }
+                $ref: "#/components/schemas/AccessRecord"
+              examples:
+                created:
+                  $ref: "#/components/examples/Available"
+        "200":
+          description: The booking already had a record; returned unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRecord"
+              examples:
+                existing:
+                  $ref: "#/components/examples/Available"
         "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /bookings/{booking_id}/access/remove:
-    post:
-      summary: Remove access, the booking was cancelled (Purchase)
-      description: Soft delete. The record is kept with status removed.
-      security:
-        - ServiceToken: []
-      parameters:
-        - $ref: "#/components/parameters/BookingId"
-      responses:
-        "200":
-          description: Access removed
+          description: >
+            `start_time` or `end_time` missing, not ISO 8601, without an offset, or
+            `end_time` not after `start_time`
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  booking_id: { type: integer }
-                  status: { type: string, example: removed }
-                  removed_at: { type: string, format: date-time }
+                $ref: "#/components/schemas/Error"
+              examples:
+                missingTimes:
+                  value: { error: "start_time, end_time required" }
+                endNotAfterStart:
+                  value: { error: end_time must be after start_time }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /bookings/{booking_id}/access/expire:
-    post:
-      summary: Expire access, the booking has ended by Purchase's clock (Purchase)
+    get:
+      operationId: read_access
+      summary: Read the access record (for Frontend's unlock page and Purchase)
+      description: >
+        Any status: `200` with the full record. An `available` record whose
+        `expires_at` has passed is first turned into `expired`.
       security:
-        - ServiceToken: []
-      parameters:
-        - $ref: "#/components/parameters/BookingId"
+        - bearerAuth: []
       responses:
         "200":
-          description: Access expired
+          description: The record
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  booking_id: { type: integer }
-                  status: { type: string, example: expired }
+                $ref: "#/components/schemas/AccessRecord"
+              examples:
+                available:
+                  $ref: "#/components/examples/Available"
+                expired:
+                  $ref: "#/components/examples/Expired"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
-  # --- Frontend -> Access -------------------------------------------------
+  /bookings/{booking_id}/access/revoke:
+    parameters:
+      - $ref: "#/components/parameters/BookingId"
+    post:
+      operationId: revoke_access
+      summary: Revoke the access, the booking was cancelled or refunded (for Purchase)
+      description: >
+        `available`: `200`, now `revoked` with `revoked_at`. Already `revoked`: `200`
+        with the same record. `used` or `expired`: `409`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRecord"
+              examples:
+                revoked:
+                  $ref: "#/components/examples/Revoked"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The record is `used` or `expired`; nothing changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conflict"
+              examples:
+                used:
+                  value: { error: access is used and cannot be revoked, status: used }
+                expired:
+                  value: { error: access has expired and cannot be revoked, status: expired }
 
   /bookings/{booking_id}/check-in:
+    parameters:
+      - $ref: "#/components/parameters/BookingId"
     post:
-      summary: Check in with the access code (Frontend)
-      parameters:
-        - $ref: "#/components/parameters/BookingId"
+      operationId: check_in
+      summary: Check in with the access code (for Frontend)
+      description: >
+        Checked in this order: unknown booking `404`; wrong code `403`, which says nothing
+        about the status; the time check; then the status. `available`: `200`, now `used`
+        with `checked_in_at`. Already `used`: `200` with the same record. `expired` or
+        `revoked`: `409`.
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [access_code]
-              properties:
-                access_code: { type: string, example: "00000000" }
+              $ref: "#/components/schemas/CheckIn"
+            examples:
+              code:
+                value: { access_code: "3f9a0c1b" }
       responses:
         "200":
           description: Checked in
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  booking_id: { type: integer }
-                  status: { type: string, example: used }
-                  checked_in_at: { type: string, format: date-time }
+                $ref: "#/components/schemas/AccessRecord"
+              examples:
+                used:
+                  $ref: "#/components/examples/Used"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: "`access_code` is missing"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                missingCode:
+                  value: { error: access_code required }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Wrong access code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                wrongCode:
+                  value: { error: wrong access code }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The record is `expired` or `revoked`; nothing changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conflict"
+              examples:
+                expired:
+                  value: { error: access has expired, status: expired }
+                revoked:
+                  value: { error: access is revoked, status: revoked }
 
   /bookings/{booking_id}/check-out:
+    parameters:
+      - $ref: "#/components/parameters/BookingId"
     post:
-      summary: Check out (Frontend). Access becomes available again until it expires
-      parameters:
-        - $ref: "#/components/parameters/BookingId"
+      operationId: check_out
+      summary: Check out (for Frontend)
+      description: >
+        `used`: `200`, `checked_out_at` is recorded once and the status stays `used`
+        (no re-entry). Repeating it: `200` with the same record. `available`, `expired`
+        or `revoked`: `409`.
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Checked out
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  booking_id: { type: integer }
-                  status: { type: string, example: available }
-                  checked_out_at: { type: string, format: date-time }
+                $ref: "#/components/schemas/AccessRecord"
+              examples:
+                checkedOut:
+                  $ref: "#/components/examples/CheckedOut"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Not checked in (`available`), or `expired` or `revoked`; nothing changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conflict"
+              examples:
+                notCheckedIn:
+                  value: { error: not checked in, status: available }
 
-# Access -> Purchase (not part of this API): when access expires by Access's clock,
-# Access calls POST {PURCHASE_URL}/bookings/{booking_id}/access-expired
-# (src/purchase_client.py; dummy, nothing is sent until Purchase has that endpoint).
+  /bookings/{booking_id}/access/expire:
+    parameters:
+      - $ref: "#/components/parameters/BookingId"
+    post:
+      operationId: expire_access
+      summary: Expire the access, the booking ended by Purchase's clock (for Purchase)
+      description: >
+        `available`: `200`, now `expired` with `expired_at`. Already `expired`, also by
+        Access's own time check: `200` with the same record. `used` or `revoked`: `409`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRecord"
+              examples:
+                expired:
+                  $ref: "#/components/examples/Expired"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The record is `used` or `revoked`; nothing changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conflict"
+              examples:
+                used:
+                  value: { error: access is used and cannot expire, status: used }
+                revoked:
+                  value: { error: access is revoked and cannot expire, status: revoked }
+
+# Access -> spacey (not part of this API): when access expires by Access's own clock,
+# Access calls POST {PURCHASE_URL}/bookings/{booking_id}/access-expired with the same
+# token (src/purchase_client.py; nothing is sent yet).
 
 components:
   securitySchemes:
-    ServiceToken:
+    bearerAuth:
       type: http
       scheme: bearer
       description: >
-        Shared secret between Purchase and Access (SERVICE_TOKEN), sent as
-        `Authorization: Bearer <token>`. Required on create, remove and expire.
-        The value lives in the platform and CI secrets, never in Git.
+        The shared service token (`SERVICE_TOKEN`). spacey sends it as
+        `Authorization: Bearer <token>` on all 6 access calls; missing or wrong is a
+        `401`, checked before anything else. Access refuses every call when it has no
+        token configured. The value lives in the platform and CI secrets, never in Git.
 
   parameters:
     BookingId:
       name: booking_id
       in: path
       required: true
-      schema: { type: integer }
+      description: spacey's booking id, the only identifier shared between services
+      schema:
+        type: integer
+        minimum: 1
+      example: 42
 
   schemas:
-    Error:
+    AccessStatus:
+      type: string
+      enum: [available, used, expired, revoked]
+
+    AccessRecord:
+      description: Every success of the 6 functions returns the full record.
       type: object
+      additionalProperties: false
+      required:
+        - booking_id
+        - access_code
+        - status
+        - expires_at
+        - checked_in_at
+        - checked_out_at
+        - revoked_at
+        - expired_at
       properties:
-        error: { type: string }
+        booking_id:
+          type: integer
+          minimum: 1
+        access_code:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: 8 lowercase hex characters; check-in compares it exactly. Never log it.
+        status:
+          $ref: "#/components/schemas/AccessStatus"
+        expires_at:
+          type: string
+          format: date-time
+          description: When the code stops working; the `end_time` sent on create
+        checked_in_at:
+          type: string
+          format: date-time
+          nullable: true
+        checked_out_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        expired_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateAccess:
+      type: object
+      required: [start_time, end_time]
+      properties:
+        start_time:
+          type: string
+          format: date-time
+          description: ISO 8601 with an offset
+        end_time:
+          type: string
+          format: date-time
+          description: ISO 8601 with an offset, after `start_time`
+
+    CheckIn:
+      type: object
+      required: [access_code]
+      properties:
+        access_code:
+          type: string
+          minLength: 1
+
+    Error:
+      description: Every refusal. A `409` always includes `status`, the record's current status.
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+        status:
+          $ref: "#/components/schemas/AccessStatus"
+
+    Conflict:
+      description: The `Error` of a `409`, where `status` is required.
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - required: [status]
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        revision:
+          type: string
+          description: The source revision that is running (`APP_REVISION`)
+        error:
+          type: string
 
   responses:
     Unauthorized:
@@ -194,9 +469,72 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-    BadRequest:
-      description: A required field is missing
+          examples:
+            badToken:
+              value: { error: invalid or missing service token }
+    NotFound:
+      description: No access record for this booking
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+          examples:
+            notFound:
+              value: { error: access record not found }
+
+  examples:
+    Available:
+      summary: Created, not used yet
+      value:
+        booking_id: 42
+        access_code: "3f9a0c1b"
+        status: available
+        expires_at: "2026-10-20T10:00:00+07:00"
+        checked_in_at: null
+        checked_out_at: null
+        revoked_at: null
+        expired_at: null
+    Used:
+      summary: Checked in
+      value:
+        booking_id: 42
+        access_code: "3f9a0c1b"
+        status: used
+        expires_at: "2026-10-20T10:00:00+07:00"
+        checked_in_at: "2026-10-20T09:05:00+07:00"
+        checked_out_at: null
+        revoked_at: null
+        expired_at: null
+    CheckedOut:
+      summary: Checked in, then out; still used
+      value:
+        booking_id: 42
+        access_code: "3f9a0c1b"
+        status: used
+        expires_at: "2026-10-20T10:00:00+07:00"
+        checked_in_at: "2026-10-20T09:05:00+07:00"
+        checked_out_at: "2026-10-20T09:55:00+07:00"
+        revoked_at: null
+        expired_at: null
+    Expired:
+      summary: Never used before the booking ended
+      value:
+        booking_id: 42
+        access_code: "3f9a0c1b"
+        status: expired
+        expires_at: "2026-10-20T10:00:00+07:00"
+        checked_in_at: null
+        checked_out_at: null
+        revoked_at: null
+        expired_at: "2026-10-20T10:00:05+07:00"
+    Revoked:
+      summary: The booking was cancelled
+      value:
+        booking_id: 42
+        access_code: "3f9a0c1b"
+        status: revoked
+        expires_at: "2026-10-20T10:00:00+07:00"
+        checked_in_at: null
+        checked_out_at: null
+        revoked_at: "2026-10-19T15:00:00+07:00"
+        expired_at: null

@@ -14,14 +14,13 @@ path so its workload identity can read it without broader variable permissions.
 The runtime database is `access`, with login `locks_user`, membership role
 `team_access`, and ownership limited to that database's `public` schema. The
 platform owner stores the connection URL in the runtime variable's `database_url`
-key and the shared Purchase/Access service token in its `service_token`
+key and the shared spacey/Access service token in its `service_token`
 key. Neither secret may be passed as a job argument, committed, or copied into
 GitHub. The Nomad job exposes the token to Access as `SERVICE_TOKEN`.
 
-Purchase sends the same secret as a Bearer token on create, remove, and expire
-calls. Provision it only through the platform's secret store;
-Purchase's CI callers should use their CI secret store. Tests use a disposable
-fixture token, not the deployed secret.
+`spacey` sends the same secret as a Bearer token on all 6 access calls. Provision
+it only through the platform's secret store; `spacey`'s CI should use its CI
+secret store. Tests use a disposable fixture token, not the deployed secret.
 
 Before release, the platform owner checks:
 
@@ -31,7 +30,7 @@ Before release, the platform owner checks:
 - Nomad clients can pull the image from GHCR, using public package visibility
   or separately provisioned registry authentication.
 - The application node can reach the database and has capacity for the job.
-- GitHub's `production` environment requires the designated release review.
+- GitHub's `production` environment does not require a separate release approval.
 
 Set repository variables `NOMAD_NAMESPACE`, `APP_HOSTNAME`, `RUNTIME_VARIABLE`
 to the approved identifiers. Set `DEPLOY_ENABLED=true` only after setup and review.
@@ -40,8 +39,10 @@ Put `NOMAD_ADDR` and a fresh namespace-scoped `NOMAD_TOKEN` in the protected
 
 ## Release and verification
 
-After review and merge, the release owner manually runs the `release` workflow
-from `main`. It runs the full test suite, builds an image, exercises that image
+Every push to `main` starts the `release` workflow. The release owner can also
+retry it manually from `main`. With `DEPLOY_ENABLED=true`, deployment proceeds
+automatically after the build checks pass, without a separate production approval.
+The workflow runs the full test suite, builds an image, exercises that image
 against disposable Postgres, and publishes that same image. Deployment uses its
 registry digest, waits for Nomad's rollout, then requires `/health` to report both
 `status: ok` and the exact source revision. A superseded main revision is rejected.

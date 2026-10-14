@@ -47,13 +47,26 @@ def create_access(conn, booking_id, start_time, end_time):
     return dict(row)
 
 
-def remove_access(conn, booking_id):
+def read_access(conn, booking_id):
+    row = conn.execute(
+        """
+        SELECT booking_id, access_code, status, expires_at,
+               checked_in_at, checked_out_at, revoked_at, expired_at
+        FROM access
+        WHERE booking_id = %s
+        """,
+        (booking_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def revoke_access(conn, booking_id):
     row = conn.execute(
         """
         UPDATE access
-        SET status = 'removed', removed_at = now()
+        SET status = 'revoked', revoked_at = now()
         WHERE booking_id = %s
-        RETURNING booking_id, status, removed_at
+        RETURNING booking_id, status, revoked_at
         """,
         (booking_id,),
     ).fetchone()

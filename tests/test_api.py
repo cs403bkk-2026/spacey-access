@@ -1,5 +1,6 @@
-"""The Access API: every endpoint answers as openapi.yaml says.
-The functions behind it are DUMMY for now (fixed answers)."""
+"""The Access API: each route calls its src/db.py function and answers with the
+status openapi.yaml gives. src/db.py is patched here, so the SQL itself is not
+exercised (ARCH-01 replaces these patches with a real/mock suite)."""
 
 from unittest.mock import patch
 
@@ -11,7 +12,7 @@ START = "2030-01-01T10:00:00+00:00"
 END = "2030-01-01T11:00:00+00:00"
 
 
-# --- Purchase -> Access --------------------------------------------------------
+# --- The 6 access functions ------------------------------------------------------
 
 
 def test_create_access_returns_201_with_an_available_code(client, auth):
@@ -42,20 +43,102 @@ def test_create_access_without_the_booking_times_is_400(client, auth):
     assert "error" in response.get_json()
 
 
-def test_remove_access_marks_it_removed(client, auth):
+def test_read_access_returns_the_record(client, auth):
     mock_result = {
         "booking_id": 42,
-        "status": "removed",
-        "removed_at": "2030-01-01T10:30:00+00:00",
+        "access_code": "a3f9c21b",
+        "status": "available",
+        "expires_at": END,
+        "checked_in_at": None,
+        "checked_out_at": None,
+        "revoked_at": None,
+        "expired_at": None,
     }
-    with patch("src.api.db.remove_access", return_value=mock_result):
-        response = client.post("/bookings/42/access/remove", headers=auth)
+    with patch("src.api.db.read_access", return_value=mock_result) as read:
+        response = client.get("/bookings/42/access", headers=auth)
+
+    assert response.status_code == 200
+    assert response.get_json() == mock_result
+    assert read.call_args.args[1] == 42
+
+
+def test_read_access_returns_404_when_not_found(client, auth):
+    with patch("src.api.db.read_access", return_value=None):
+        response = client.get("/bookings/99/access", headers=auth)
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "access record not found"}
+
+
+def test_revoke_access_marks_it_revoked(client, auth):
+    mock_result = {
+        "booking_id": 42,
+        "status": "revoked",
+        "revoked_at": "2030-01-01T10:30:00+00:00",
+    }
+    with patch("src.api.db.revoke_access", return_value=mock_result):
+        response = client.post("/bookings/42/access/revoke", headers=auth)
 
     assert response.status_code == 200
     body = response.get_json()
     assert body["booking_id"] == 42
-    assert body["status"] == "removed"
-    assert body["removed_at"]
+    assert body["status"] == "revoked"
+    assert body["revoked_at"]
+
+
+def test_revoke_access_returns_404_when_not_found(client, auth):
+    with patch("src.api.db.revoke_access", return_value=None):
+        response = client.post("/bookings/99/access/revoke", headers=auth)
+
+    assert response.status_code == 404
+
+
+def test_check_in_marks_it_used(client, auth):
+    mock_result = {
+        "booking_id": 42,
+        "status": "used",
+        "checked_in_at": "2030-01-01T10:05:00+00:00",
+    }
+    with patch("src.api.db.check_in", return_value=mock_result):
+        response = client.post(
+            "/bookings/42/check-in", json={"access_code": "a3f9c21b"}, headers=auth
+        )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["status"] == "used"
+    assert body["checked_in_at"]
+
+
+def test_check_in_returns_404_when_no_record_matches(client, auth):
+    with patch("src.api.db.check_in", return_value=None):
+        response = client.post(
+            "/bookings/42/check-in", json={"access_code": "wrongcode"}, headers=auth
+        )
+
+    assert response.status_code == 404
+
+
+def test_check_in_without_a_code_is_400(client, auth):
+    response = client.post("/bookings/42/check-in", json={}, headers=auth)
+
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+
+
+def test_check_out_records_checked_out_at_and_stays_used(client, auth):
+    mock_result = {
+        "booking_id": 42,
+        "status": "used",
+        "checked_out_at": "2030-01-01T11:00:00+00:00",
+    }
+    with patch("src.api.db.check_out", return_value=mock_result):
+        response = client.post("/bookings/42/check-out", headers=auth)
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["status"] == "used"
+    assert body["checked_out_at"]
 
 
 def test_expire_access_marks_it_expired(client, auth):
@@ -67,110 +150,51 @@ def test_expire_access_marks_it_expired(client, auth):
     assert response.get_json() == {"booking_id": 42, "status": "expired"}
 
 
-# --- Service token (ACC-08) ----------------------------------------------------
+@pytest.mark.parametrize("url", ["/bookings/42/unlock", "/bookings/42/access/remove"])
+def test_the_old_routes_are_gone(client, auth, url):
+    response = client.post(url, headers=auth)
 
-PURCHASE_ENDPOINTS = [
-    ("/bookings/42/access", "create_access"),
-    ("/bookings/42/access/remove", "remove_access"),
-    ("/bookings/42/access/expire", "expire_access"),
+    assert response.status_code == 404
+
+
+# --- Service token (ACC-08), on all 6 since 0.2.0 -------------------------------
+
+ACCESS_ENDPOINTS = [
+    ("POST", "/bookings/42/access", "create_access"),
+    ("GET", "/bookings/42/access", "read_access"),
+    ("POST", "/bookings/42/access/revoke", "revoke_access"),
+    ("POST", "/bookings/42/check-in", "check_in"),
+    ("POST", "/bookings/42/check-out", "check_out"),
+    ("POST", "/bookings/42/access/expire", "expire_access"),
 ]
 
 
-@pytest.mark.parametrize(("url", "db_function"), PURCHASE_ENDPOINTS)
+@pytest.mark.parametrize(("method", "url", "db_function"), ACCESS_ENDPOINTS)
 @pytest.mark.parametrize(
     "headers",
     [{}, {"Authorization": "Bearer invalid-token"}, {"Authorization": "Bearer café"}],
 )
-def test_purchase_calls_reject_invalid_tokens_before_db(
-    client, url, db_function, headers
+def test_access_calls_reject_invalid_tokens_before_db(
+    client, method, url, db_function, headers
 ):
     with patch(f"src.api.db.{db_function}") as mock_db:
-        response = client.post(url, json={}, headers=headers)
+        response = client.open(url, method=method, json={}, headers=headers)
 
     assert response.status_code == 401
+    assert response.get_json() == {"error": "invalid or missing service token"}
     mock_db.assert_not_called()
 
 
-@pytest.mark.parametrize(("url", "db_function"), PURCHASE_ENDPOINTS)
-def test_purchase_calls_are_refused_when_server_has_no_token(
-    client, auth, monkeypatch, url, db_function
+@pytest.mark.parametrize(("method", "url", "db_function"), ACCESS_ENDPOINTS)
+def test_access_calls_are_refused_when_server_has_no_token(
+    client, auth, monkeypatch, method, url, db_function
 ):
     monkeypatch.delenv("SERVICE_TOKEN")
     with patch(f"src.api.db.{db_function}") as mock_db:
-        response = client.post(url, json={}, headers=auth)
+        response = client.open(url, method=method, json={}, headers=auth)
 
     assert response.status_code == 401
     mock_db.assert_not_called()
-
-
-def test_frontend_calls_do_not_need_a_token(client):
-    result = {
-        "booking_id": 42,
-        "status": "available",
-        "checked_out_at": END,
-    }
-    with patch("src.api.db.check_out", return_value=result):
-        response = client.post("/bookings/42/check-out")
-
-    assert response.status_code == 200
-
-
-# --- Frontend -> Access --------------------------------------------------------
-
-
-def test_check_in_marks_it_used(client):
-    mock_result = {
-        "booking_id": 42,
-        "status": "used",
-        "checked_in_at": "2030-01-01T10:05:00+00:00",
-    }
-    with patch("src.api.db.check_in", return_value=mock_result):
-        response = client.post(
-            "/bookings/42/check-in", json={"access_code": "a3f9c21b"}
-        )
-
-    assert response.status_code == 200
-    body = response.get_json()
-    assert body["status"] == "used"
-    assert body["checked_in_at"]
-
-
-def test_check_in_returns_404_when_code_invalid_or_already_used(client):
-    with patch("src.api.db.check_in", return_value=None):
-        response = client.post(
-            "/bookings/42/check-in", json={"access_code": "wrongcode"}
-        )
-
-    assert response.status_code == 404
-
-
-def test_check_in_without_a_code_is_400(client):
-    response = client.post("/bookings/42/check-in", json={})
-
-    assert response.status_code == 400
-    assert "error" in response.get_json()
-
-
-def test_remove_access_returns_404_when_not_found(client, auth):
-    with patch("src.api.db.remove_access", return_value=None):
-        response = client.post("/bookings/99/access/remove", headers=auth)
-
-    assert response.status_code == 404
-
-
-def test_check_out_makes_it_available_again(client):
-    mock_result = {
-        "booking_id": 42,
-        "status": "available",
-        "checked_out_at": "2030-01-01T11:00:00+00:00",
-    }
-    with patch("src.api.db.check_out", return_value=mock_result):
-        response = client.post("/bookings/42/check-out")
-
-    assert response.status_code == 200
-    body = response.get_json()
-    assert body["status"] == "available"
-    assert body["checked_out_at"]
 
 
 # --- Access -> Purchase --------------------------------------------------------
