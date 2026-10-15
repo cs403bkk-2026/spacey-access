@@ -206,6 +206,27 @@ One line of why each. "Proposed" means it needs the team's agreement before it c
 | Mock in production | No production job sets `MOCK=1` (`deploy/access.nomad.hcl` doesn't). The ARCH-01 mock refuses to start when `DATABASE_URL` is set | A mock would hand out fake codes |
 | Capacity and placement | Keep `count = 1`, pinned to `cs403bkk-nomad-1` | Simple, and enough for a course cluster; a node problem or a deploy means short downtime, accepted on purpose |
 
+## Production schema
+
+**At migration `002` since 2026-10-14** (ACC-19, #55). Before that, the production
+`access` database had **no tables**: releases had deployed the code, but nothing
+applies migrations, and `/health` stayed green.
+
+Applied in pgAdmin on the `access` database, as one transaction:
+`BEGIN; SET LOCAL ROLE team_access;` + `001` + `002` from `main` @ `d8b72c9` + `COMMIT;`.
+Verified afterwards: 12 columns ending in `revoked_at, expired_at`;
+`access_status_check` = `available, used, expired, revoked`; owner `team_access`
+(`locks_user` is a member, so it has the owner's rights); 0 rows.
+
+**Rule:** every release that needs a new migration gets that migration applied to
+production **before** it is merged to `main`, because a merge deploys
+immediately. Check the result with:
+
+```sql
+SELECT column_name FROM information_schema.columns WHERE table_name = 'access' ORDER BY ordinal_position;
+SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'access_status_check';
+```
+
 ## SRE handoff
 
 Amp checks the approved deployment workflow with her own access, reads
