@@ -1,0 +1,36 @@
+# Overlay on compose.local.yaml for the extraction gates (orchestration/run.sh).
+# Local only: never used by CI.
+#
+#   spacey ──ACCESS_URL──▶ tap (mitmproxy, records every call) ──▶ app (spacey-access)
+#
+# The smoke driver also reaches Access through the tap (host :8025), so both
+# spacey's calls and the direct contract checks are recorded and inspected.
+services:
+  spacey:
+    # Built locally from the extract branch (native arch), not the amd64 release image.
+    platform: ${SPACEY_PLATFORM:-linux/arm64}
+    environment:
+      # Empty = spacey's local path (as on main); http://tap:8080 = via the service.
+      ACCESS_URL: ${SPACEY_ACCESS_URL:-}
+
+  spacey-db:
+    ports:
+      - "5446:5432"   # read-only checks and the data copy (F4) from the host
+
+  tap:
+    image: mitmproxy/mitmproxy:11.0.2
+    command: ["mitmdump", "--mode", "reverse:http://app:8000", "--listen-port", "8080",
+              "--set", "keep_host_header=true",
+              # lazy: read the request before connecting upstream, so a call made
+              # while Access is down is still recorded (502 to the caller).
+              "--set", "connection_strategy=lazy", "-q", "-s", "/orch/tap.py"]
+    environment:
+      CAPTURE_FILE: /captures/flows.jsonl
+    volumes:
+      - ./orchestration:/orch:ro
+      - ${CAPTURE_DIR:?set by orchestration/run.sh}:/captures
+    ports:
+      - "8025:8080"
+    depends_on:
+      app:
+        condition: service_started

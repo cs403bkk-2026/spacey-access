@@ -126,3 +126,18 @@ Record the result in the ACC-11 issue:
 | second `--apply` | `inserted 0`, `marked revoked: 0` | |
 | `marked revoked` on first run | number of access rows without a booking (expected 0 on a clean copy) | |
 | `count(DISTINCT access_code)` | same in source and target | |
+
+## Rehearsed locally (extract F4)
+
+`orchestration/run.sh F4 local` runs the real script against real containers:
+
+1. **Old path:** `spacey` with `ACCESS_URL` unset issues 4 codes (its own table) and makes no Access call.
+2. **Copy:** the dry run writes nothing; `--apply` copies every code, `available`.
+3. **Cancel on the old path, copy again:** nothing new is inserted, and the cancelled booking's record becomes `revoked`.
+4. **Switch `spacey` to the service** (`ACCESS_URL` set):
+   - unlocking the copied bookings returns **the same codes** (the service answers `200`, found)
+   - a never-unlocked booking gets a new code (`201`)
+   - the cancelled one stays `404`, with no call
+5. **Repair:** a cancel made while Access was down misses its revoke. The next copy marks it `revoked`.
+
+**Assumption to keep in mind:** the "no booking → revoked" rule trusts that `spacey`'s `bookings` table lists **every** live booking. If bookings are created somewhere else (e.g. the Purchase service behind `PURCHASE_URL`), check that they are mirrored into `spacey`'s `bookings` before running the copy. Otherwise valid codes would be revoked.
