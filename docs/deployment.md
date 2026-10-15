@@ -112,8 +112,8 @@ Practised twice on 2026-10-14:
 ## Local integration test
 
 **This is not a staging environment.** There is no shared staging environment
-yet. Until there is, a developer can run Access with Docker Compose on their own
-machine before merging. That tests what breaks
+yet. Until there is, a developer can run Access (and `spacey`, its caller) with
+Docker Compose on their own machine before merging. That tests what breaks
 releases most (the image, migrations on a fresh database, the API), but not the
 Nomad job file, Traefik or TLS, and nobody else can reach it.
 
@@ -135,9 +135,9 @@ machine and kept in `.local-test/` (ignored by Git and Docker).
 ```bash
 scripts/local-test.sh up            # build the current checkout, deploy it, then smoke
 scripts/local-test.sh up <image>    # same for a released image, e.g. ghcr.io/cs403bkk-2026/spacey-access:<sha>
-scripts/local-test.sh smoke         # the API checks on their own
+scripts/local-test.sh smoke         # the API checks on their own, plus spacey -> Access
 scripts/local-test.sh rollback      # redeploy the previous image, then smoke
-scripts/local-test.sh status        # containers, current and previous image, /health
+scripts/local-test.sh status        # containers, current and previous image, /health of both
 scripts/local-test.sh down          # stop, keep the data (reset also deletes it)
 ```
 
@@ -148,6 +148,24 @@ runs the full `SELECT`), create, read back, check-in, revoke, and refusal withou
 a token. A gap the team already tracks is reported as `KNOWN` and doesn't fail the
 deploy (today: repeat create → 500, Phase 2). The smoke test never prints an
 access code or the token.
+
+**`spacey` reaches Access.** The local test also runs `spacey`, Access's only caller,
+from its released image (`ghcr.io/cs403bkk-2026/spacey:<sha>`, by default the
+image of `spacey`'s current `main`; `SPACEY_IMAGE=<image>` picks another), with its
+own database and the two settings it uses for Access:
+
+| Setting | Local value |
+|---|---|
+| `ACCESS_URL` | `http://app:8000` (Access on the Compose network) |
+| `SERVICE_TOKEN` | the same local token Access uses |
+
+The smoke test runs two requests **from inside the `spacey` container**, with
+`spacey`'s own settings: `${ACCESS_URL}/health` → 200, and an authenticated read
+of an unknown booking → 404 (a `401` would mean the tokens differ, and `000`
+means Access is unreachable). This is a network-level check: `spacey`'s Access
+client (ARCH-02) doesn't exist yet. Verified 2026-10-14 with `spacey` `10060a6`:
+both pass, and both fail (`000`) when Access is stopped. Released `spacey` images
+are `amd64` only, so on an ARM laptop they run under emulation.
 
 **Found while rehearsing the first real release (2026-10-13/14):**
 
@@ -177,14 +195,14 @@ One line of why each. "Proposed" means it needs the team's agreement before it c
 | Release per environment | A push to `main` deploys to production. The local test runs **before** merging (`scripts/local-test.sh up` on the PR branch) | There is no staging environment or staging step in the workflow, so testing must happen before the merge |
 | Migrations | The image ships `migrations/` (`Dockerfile`), and the local test applies them from the deployed image. **Production today:** manual (D7), applied **before** merging the release that needs them. **Proposed:** a Nomad prestart task that runs the image's migrations, like the local test's `migrate` service | Production ran without its table because nobody applied `001`. Running migrations from the image keeps code and schema paired; all files are idempotent |
 | Rollback across a migration | Only if the migration is backward-compatible with the older code; `002` is not | Old code on a newer schema stays healthy but breaks (`478efb0` on `002`: revoke/remove fail) |
-| Service-to-service routing | `spacey` reaches Access through the public hostname: `ACCESS_URL=https://access.cs403bkk26.space` | `spacey` (namespace `startup`) and Access (namespace `access`) are in different namespaces; Nomad's built-in service discovery only works within a namespace |
+| Service-to-service routing | Production: `spacey` reaches Access through the public hostname, `ACCESS_URL=https://access.cs403bkk26.space`. Local test: `ACCESS_URL=http://app:8000` on the Compose network, checked by the smoke test from inside `spacey` | `spacey` (namespace `startup`) and Access (namespace `access`) are in different namespaces; Nomad's built-in service discovery only works within a namespace |
 | Health | `/health` (`SELECT 1`) stays a liveness check for Nomad's routing and `auto_revert`. After a deploy, also run the smoke test | It proves the connection, not the schema or the API: it was green with no table |
 | Restart on failed health | No `check_restart` on `/health` | A restart can't fix a database outage; it only adds noise |
 | Restart policy | **Proposed:** `restart { attempts = 3, interval = "5m", mode = "fail" }`, like `spacey` | Access uses Nomad's defaults today, unlike `spacey`; a crash loop should stop and be visible |
 | Logging | Follow `docs/logging.md` (ACC-13.5): `key=value` lines, never the access code, token or `DATABASE_URL` | One searchable format in Loki; secrets must not leak |
 | Dashboards and alerts | Grafana dashboard and alert rules come from ACC-14 (#44) | Thresholds need the log signals from ACC-13.5 and a week of baseline |
 | Rollback | See "Rollback runbook" | `auto_revert` only covers unhealthy releases, not "healthy but wrong" |
-| Backups | **To verify:** a `pg-backup` batch job runs in namespace `postgres`. Check whether it includes the `access` database, and try one restore | Access records are never deleted (SP-R12); they are the audit trail |
+| Backups | Rely on the platform's `pg-backup` job (namespace `postgres`, checked 2026-10-14): a periodic batch job that `pg_dump -Fc`s **every** database except `postgres`/`template*`, so `access` is included, to `/backup/<db>_<time>.dump` on the `pgbackup` host volume, about 4 times a day (102 runs since 19 Sep), keeping `RETENTION_DAYS`. Restore procedure rehearsed in the local test: `pg_dump -Fc` → `pg_restore` into a new database gave identical rows, columns, check and data checksum. **Still for the platform owner:** confirm the latest run succeeded and restore one real `access_*.dump` once (the SRE token can't list runs or read the host volume) | Access records are never deleted (SP-R12); they are the audit trail. Note that dumps taken before 2026-10-14 have no `access` table |
 | Mock in production | No production job sets `MOCK=1` (`deploy/access.nomad.hcl` doesn't). The ARCH-01 mock refuses to start when `DATABASE_URL` is set | A mock would hand out fake codes |
 | Capacity and placement | Keep `count = 1`, pinned to `cs403bkk-nomad-1` | Simple, and enough for a course cluster; a node problem or a deploy means short downtime, accepted on purpose |
 

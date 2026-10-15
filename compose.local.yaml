@@ -60,5 +60,37 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # spacey, the only caller of Access, with the two settings it uses to reach it.
+  # It talks to Access over this network (http://app:8000), the way it will over
+  # the cluster later. Released spacey images are amd64 only.
+  spacey-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: spacey
+      POSTGRES_PASSWORD: spacey
+      POSTGRES_DB: spacey
+    volumes:
+      - local-spacey-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spacey -d spacey"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  spacey:
+    image: ${SPACEY_IMAGE:?set by scripts/local-test.sh}
+    platform: linux/amd64
+    environment:
+      APP_REVISION: ${SPACEY_REVISION:?set by scripts/local-test.sh}
+      DATABASE_URL: postgresql://spacey:spacey@spacey-db:5432/spacey
+      ACCESS_URL: http://app:8000
+      SERVICE_TOKEN: ${LOCAL_SERVICE_TOKEN:?set by scripts/local-test.sh}
+    ports:
+      - "8024:8000"
+    depends_on:
+      spacey-db:
+        condition: service_healthy
+
 volumes:
   local-db-data:
+  local-spacey-db-data:
