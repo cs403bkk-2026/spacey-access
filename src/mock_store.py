@@ -2,7 +2,7 @@
 
 It follows the 0.2.0 contract in openapi.yaml exactly (the State x action
 table), because spacey's tests are built against this mock. Real mode
-(src/db.py) gets the same lifecycle in Phase 2.
+(src/db.py) follows the same lifecycle (extract F6, tests/test_lifecycle_real.py).
 
 Same function names and arguments as src/db.py, so src/api.py can call
 either one. The difference: every function here returns (body, status),
