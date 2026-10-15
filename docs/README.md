@@ -12,6 +12,9 @@ the gaps, which Phase 2 closes.
 | [for-other-teams.md](for-other-teams.md) | **Purchase, Frontend** | How to call Access, and what not to do |
 | [migrate-from-spacey.md](migrate-from-spacey.md) | Access team, Purchase | What moves out of the `spacey` monolith, and in which order |
 | [production-data-migration.md](production-data-migration.md) | Access team, SRE | Copying existing access rows from `spacey` production, with the script |
+| [operations/alerts.md](operations/alerts.md) | Access team, SRE | SLIs, SLOs, severities and each alert, with the reason for its numbers |
+| [operations/runbook.md](operations/runbook.md) | whoever is on call | What to check and do for each alert |
+| [operations/incident-report-template.md](operations/incident-report-template.md) | Access team | The blameless report, and when one is required; filed reports in [operations/incidents/](operations/incidents/) |
 
 Decision records live in [`ACC/`](ACC/), named `####-Title.md`:
 [ACC 0001](ACC/0001-working-skeleton.md) (the working skeleton),
