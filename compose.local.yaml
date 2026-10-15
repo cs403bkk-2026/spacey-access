@@ -1,0 +1,96 @@
+# Local integration test for Access. Not a staging environment (see
+# docs/deployment.md). Runs a given image against its own empty-at-start
+# database, applying migrations before the app starts, like a real release.
+#
+# Use scripts/local-test.sh, not this file directly: it picks the image, the
+# revision and the token, and remembers the previous image for rollback.
+name: access-local
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: access
+      POSTGRES_PASSWORD: access
+      POSTGRES_DB: access
+    ports:
+      - "5444:5432"
+    volumes:
+      - local-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U access -d access"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Applies the migrations shipped *in the deployed image* (/app/migrations), in
+  # filename order, one transaction per file, then exits. Every file is
+  # idempotent, so this runs on every start, the shape of a Nomad prestart task.
+  # Images built before migrations/ was copied in have none: nothing is applied.
+  migrate:
+    image: ${ACCESS_IMAGE:?set by scripts/local-test.sh}
+    environment:
+      DATABASE_URL: postgresql://access:access@db:5432/access
+    entrypoint:
+      - python
+      - -c
+      - |
+        import glob, os, psycopg
+        files = sorted(glob.glob("/app/migrations/*.sql"))
+        if not files:
+            print("image has no migrations/: nothing applied")
+        with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+            for path in files:
+                print("applying", os.path.basename(path))
+                conn.execute(open(path).read())
+                conn.commit()
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    image: ${ACCESS_IMAGE:?set by scripts/local-test.sh}
+    environment:
+      APP_REVISION: ${ACCESS_REVISION:?set by scripts/local-test.sh}
+      DATABASE_URL: postgresql://access:access@db:5432/access
+      SERVICE_TOKEN: ${LOCAL_SERVICE_TOKEN:?set by scripts/local-test.sh}
+    ports:
+      - "8023:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # spacey, the only caller of Access, with the two settings it uses to reach it.
+  # It talks to Access over this network (http://app:8000), the way it will over
+  # the cluster later. Released spacey images are amd64 only.
+  spacey-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: spacey
+      POSTGRES_PASSWORD: spacey
+      POSTGRES_DB: spacey
+    volumes:
+      - local-spacey-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spacey -d spacey"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  spacey:
+    image: ${SPACEY_IMAGE:?set by scripts/local-test.sh}
+    platform: linux/amd64
+    environment:
+      APP_REVISION: ${SPACEY_REVISION:?set by scripts/local-test.sh}
+      DATABASE_URL: postgresql://spacey:spacey@spacey-db:5432/spacey
+      ACCESS_URL: http://app:8000
+      SERVICE_TOKEN: ${LOCAL_SERVICE_TOKEN:?set by scripts/local-test.sh}
+    ports:
+      - "8024:8000"
+    depends_on:
+      spacey-db:
+        condition: service_healthy
+
+volumes:
+  local-db-data:
+  local-spacey-db-data:

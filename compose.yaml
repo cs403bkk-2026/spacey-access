@@ -21,6 +21,7 @@ services:
     environment:
       APP_REVISION: compose
       DATABASE_URL: postgresql://access:access@db:5432/access
+      SERVICE_TOKEN: local-dev-token
     ports:
       - "8003:8000"
     depends_on:
